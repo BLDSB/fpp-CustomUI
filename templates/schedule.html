@@ -319,6 +319,7 @@
         { name: 'Fri', bit: 0x00200 },
         { name: 'Sat', bit: 0x00100 },
     ];
+    const R = window.APP_ROOT || '';
 
     // FPP v9.5 day-index (0-15) to day-mask conversion
     const INDEX_TO_MASK = {
@@ -490,7 +491,7 @@
     // ── Load schedule ──────────────────────────────────────────────────────
     async function loadSchedule() {
         try {
-            const res = await fetch('/api/schedule/list');
+            const res = await fetch(R + '/api/schedule/list');
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to load');
             scheduleEntries = data.entries || [];
@@ -521,8 +522,8 @@
     async function loadPlaylists() {
         try {
             const [playlistRes, seqRes] = await Promise.all([
-                fetch('/api/playlists'),
-                fetch('/api/sequences'),
+                fetch(R + '/api/playlists'),
+                fetch(R + '/api/sequences'),
             ]);
             const data = await playlistRes.json();
             const seqData = await seqRes.json().catch(() => ({}));
@@ -621,7 +622,7 @@
         }
 
         const isEdit = idx >= 0;
-        const url    = isEdit ? `/api/schedule/entry/${idx}` : '/api/schedule/entry';
+        const url    = isEdit ? `${R}/api/schedule/entry/${idx}` : R + '/api/schedule/entry';
         const method = isEdit ? 'PUT' : 'POST';
 
         try {
@@ -666,7 +667,7 @@
             } else {
                 toggled.playlist = key;
             }
-            const res  = await fetch(`/api/schedule/entry/${idx}`, {
+            const res  = await fetch(`${R}/api/schedule/entry/${idx}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(toggled),
@@ -685,7 +686,7 @@
     async function deleteEntry(idx) {
         if (!confirm(`Delete the "${getEntryDisplayName(scheduleEntries[idx])}" entry?`)) return;
         try {
-            const res  = await fetch(`/api/schedule/entry/${idx}`, { method: 'DELETE' });
+            const res  = await fetch(`${R}/api/schedule/entry/${idx}`, { method: 'DELETE' });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Delete failed');
             scheduleEntries = data.entries || scheduleEntries;

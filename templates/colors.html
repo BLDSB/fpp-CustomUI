@@ -424,6 +424,7 @@
 
     // ── Helpers ────────────────────────────────────────────────
     async function apiFetch(url, method = 'GET', body = null) {
+        url = (window.APP_ROOT || '') + url;
         const opts = {
             method,
             headers: { 'X-Requested-With': 'XMLHttpRequest' },

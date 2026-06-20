@@ -369,7 +369,7 @@
             hidden:       row.querySelector('input[type="checkbox"]').checked,
         }));
         try {
-            const res = await fetch('/api/zones', {
+            const res = await fetch((window.APP_ROOT||'') + '/api/zones', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(payload),
@@ -405,7 +405,7 @@
 
         btn.disabled = true;
         try {
-            const res = await fetch('/api/change-password', {
+            const res = await fetch((window.APP_ROOT||'') + '/api/change-password', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({ current_password: curPw, new_password: newPw }),
@@ -427,7 +427,7 @@
         const btn = document.getElementById('btn-save');
         btn.disabled = true;
         try {
-            const res = await fetch('/api/settings', {
+            const res = await fetch((window.APP_ROOT||'') + '/api/settings', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
