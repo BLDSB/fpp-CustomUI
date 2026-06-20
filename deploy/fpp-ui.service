@@ -1,0 +1,29 @@
+# Systemd service for the FPP custom web UI
+#
+# Install:
+#   sudo cp ~/fpp-ui/deploy/fpp-ui.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable fpp-ui
+#   sudo systemctl start fpp-ui
+#
+# After any file update, restart with:
+#   sudo systemctl restart fpp-ui
+
+[Unit]
+Description=FPP Custom Web UI (Flask)
+After=network.target fpp.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=fpp
+WorkingDirectory=/home/fpp/fpp-ui
+EnvironmentFile=/home/fpp/fpp-ui/.env
+ExecStart=/home/fpp/fpp-ui/venv/bin/python run.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/fpp/fpp-ui/fpp-ui.log
+StandardError=append:/home/fpp/fpp-ui/fpp-ui.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,733 @@
+{% extends "base.html" %}
+{% block title %}Schedule{% endblock %}
+
+{% block extra_head %}
+<style>
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    /* Table */
+    .tbl-wrap {
+        overflow-x: auto;
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+    }
+    thead th {
+        background: var(--surface-hi);
+        color: var(--text-dim);
+        text-align: left;
+        padding: 0.65rem 0.85rem;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    tbody tr { border-bottom: 1px solid var(--border-dim); }
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+    tbody td { padding: 0.6rem 0.85rem; vertical-align: middle; }
+    .disabled-row { opacity: 0.45; }
+
+    /* Enabled toggle */
+    .toggle-btn {
+        padding: 0.2rem 0.55rem;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+    .toggle-btn.on  { background: rgba(46,204,113,0.15); color: #2ecc71; border: 1px solid rgba(46,204,113,0.3); }
+    .toggle-btn.off { background: rgba(255,255,255,0.06); color: var(--text-dim); border: 1px solid var(--border-dim); }
+
+    /* Action buttons in table */
+    .action-btn {
+        padding: 0.2rem 0.55rem;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 0.78rem;
+        margin-left: 0.25rem;
+    }
+    .btn-edit   { background: rgba(126,200,227,0.12); color: #7ec8e3; border: 1px solid rgba(126,200,227,0.25); }
+    .btn-edit:hover { background: rgba(126,200,227,0.22); }
+    .btn-delete { background: rgba(233,69,96,0.12); color: #f5a0a0; border: 1px solid rgba(233,69,96,0.25); }
+    .btn-delete:hover { background: rgba(233,69,96,0.22); }
+
+    /* Primary / ghost buttons */
+    .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        padding: 0.5rem 1.1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.88rem;
+        font-weight: 600;
+        transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-ghost {
+        background: transparent;
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
+        padding: 0.5rem 1.1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.88rem;
+        font-weight: 600;
+        transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--text-dim); color: var(--text); }
+
+    /* Empty / loading */
+    .info-msg { color: var(--text-dim); text-align: center; margin-top: 3rem; }
+
+    /* Modal overlay */
+    #modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.70);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 500;
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+    }
+    #modal {
+        background: var(--surface-hi);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.75rem 2rem;
+        width: min(460px, 94vw);
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 48px rgba(0,0,0,0.5);
+    }
+    #modal h2 { font-size: 1.05rem; font-weight: 800; color: var(--accent); margin-bottom: 1.25rem; }
+
+    /* Form elements */
+    .form-group { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    .form-group label { font-size: 0.78rem; color: var(--text-dim); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+    .form-group select,
+    .form-group input[type="time"],
+    .form-group input[type="number"] {
+        background: rgba(10, 15, 40, 0.85);
+        color: var(--text);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.45rem 0.65rem;
+        font-size: 0.9rem;
+        width: 100%;
+    }
+    .form-group select:focus,
+    .form-group input[type="time"]:focus,
+    .form-group input[type="number"]:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+
+    /* Day checkboxes */
+    .day-grid {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .day-label {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: rgba(10, 15, 40, 0.85);
+        border: 1px solid var(--border-dim);
+        border-radius: 5px;
+        padding: 0.3rem 0.6rem;
+        cursor: pointer;
+        font-size: 0.82rem;
+        color: var(--text-dim);
+        user-select: none;
+        transition: border-color 0.15s, color 0.15s;
+    }
+    .day-label input { accent-color: var(--accent); }
+    .day-label:has(input:checked) {
+        border-color: var(--accent);
+        color: var(--text);
+    }
+
+    /* Time row */
+    .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+    /* Inline checkboxes */
+    .inline-checks { display: flex; gap: 1.25rem; }
+    .inline-cb {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.88rem;
+        cursor: pointer;
+        color: var(--text);
+    }
+    .inline-cb input { accent-color: var(--accent); }
+
+    /* Form actions */
+    .form-actions { display: flex; gap: 0.75rem; margin-top: 1.25rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-heading" style="margin-bottom:0">
+        <h1><em>Schedule</em></h1>
+    </div>
+    <button id="btn-add" class="btn-primary">+ Add Entry</button>
+</div>
+
+<p id="loading-msg" class="info-msg">Loading schedule…</p>
+
+<div class="tbl-wrap">
+    <table id="schedule-table" hidden>
+        <thead>
+            <tr>
+                <th>Enabled</th>
+                <th>Action</th>
+                <th>Days</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Repeat</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="schedule-body"></tbody>
+    </table>
+</div>
+
+<p id="empty-msg" class="info-msg" hidden>No schedule entries. Click "+ Add Entry" to create one.</p>
+
+<!-- ── Modal ──────────────────────────────────────────────────────────── -->
+<div id="modal-overlay" style="display:none">
+    <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title">Add Schedule Entry</h2>
+        <form id="entry-form" novalidate>
+            <input type="hidden" id="edit-idx" value="-1">
+
+            <div class="form-group">
+                <label for="f-playlist">Playlist</label>
+                <select id="f-playlist" required>
+                    <option value="">Loading playlists…</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Days</label>
+                <div class="day-grid" id="day-grid">
+                    <label class="day-label"><input type="checkbox" value="16384"> Sun</label>
+                    <label class="day-label"><input type="checkbox" value="8192">  Mon</label>
+                    <label class="day-label"><input type="checkbox" value="4096">  Tue</label>
+                    <label class="day-label"><input type="checkbox" value="2048">  Wed</label>
+                    <label class="day-label"><input type="checkbox" value="1024">  Thu</label>
+                    <label class="day-label"><input type="checkbox" value="512">   Fri</label>
+                    <label class="day-label"><input type="checkbox" value="256">   Sat</label>
+                </div>
+            </div>
+
+            <div class="time-row">
+                <div class="form-group">
+                    <label for="f-start-type">Start Time</label>
+                    <select id="f-start-type">
+                        <option value="exact">Exact Time</option>
+                        <option value="Dawn">Dawn</option>
+                        <option value="SunRise">Sunrise</option>
+                        <option value="SunSet">Sunset</option>
+                        <option value="Dusk">Dusk</option>
+                    </select>
+                    <input type="time" id="f-start" style="margin-top:0.35rem">
+                    <input type="number" id="f-start-offset" class="offset-input"
+                           placeholder="Offset (min, e.g. -30)" min="-360" max="360"
+                           style="display:none; margin-top:0.35rem">
+                </div>
+
+                <div class="form-group">
+                    <label for="f-end-type">End Time</label>
+                    <select id="f-end-type">
+                        <option value="exact">Exact Time</option>
+                        <option value="Dawn">Dawn</option>
+                        <option value="SunRise">Sunrise</option>
+                        <option value="SunSet">Sunset</option>
+                        <option value="Dusk">Dusk</option>
+                    </select>
+                    <input type="time" id="f-end" style="margin-top:0.35rem">
+                    <input type="number" id="f-end-offset" class="offset-input"
+                           placeholder="Offset (min, e.g. -30)" min="-360" max="360"
+                           style="display:none; margin-top:0.35rem">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="f-stop-type">Stop Type</label>
+                <select id="f-stop-type">
+                    <option value="0">Graceful (finish current item)</option>
+                    <option value="1">Hard Stop (stop immediately)</option>
+                    <option value="2">Immediate (no lead-out)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Options</label>
+                <div class="inline-checks">
+                    <label class="inline-cb">
+                        <input type="checkbox" id="f-repeat"> Repeat
+                    </label>
+                    <label class="inline-cb">
+                        <input type="checkbox" id="f-enabled" checked> Enabled
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-primary">Save</button>
+                <button type="button" id="btn-cancel" class="btn-ghost">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // FPP v9.5 INX_DAY_MASK_* bit values for individual days
+    const DAYS = [
+        { name: 'Sun', bit: 0x04000 },
+        { name: 'Mon', bit: 0x02000 },
+        { name: 'Tue', bit: 0x01000 },
+        { name: 'Wed', bit: 0x00800 },
+        { name: 'Thu', bit: 0x00400 },
+        { name: 'Fri', bit: 0x00200 },
+        { name: 'Sat', bit: 0x00100 },
+    ];
+
+    // FPP v9.5 day-index (0-15) to day-mask conversion
+    const INDEX_TO_MASK = {
+         0: 0x04000,  // Sun
+         1: 0x02000,  // Mon
+         2: 0x01000,  // Tue
+         3: 0x00800,  // Wed
+         4: 0x00400,  // Thu
+         5: 0x00200,  // Fri
+         6: 0x00100,  // Sat
+         7: 0x07F00,  // Every day
+         8: 0x03E00,  // Weekdays (Mon-Fri)
+         9: 0x04100,  // Weekend (Sat-Sun)
+        10: 0x02A00,  // Mon/Wed/Fri
+        11: 0x01400,  // Tue/Thu
+        12: 0x07C00,  // Sun-Thu
+        13: 0x00300,  // Fri/Sat
+    };
+
+    const SOLAR_TIMES = new Set(['Dawn', 'SunRise', 'SunSet', 'Dusk']);
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let scheduleEntries = [];
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function formatDays(dayIndex) {
+        const m = parseInt(dayIndex, 10);
+        // FPP v9.5 named indices (0-15)
+        if (m >= 0 && m <= 15) {
+            const IDX = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat',
+                         'Every day', 'Weekdays', 'Weekend', 'Mon/Wed/Fri',
+                         'Tue/Thu', 'Sun-Thu', 'Fri/Sat', 'Odd Day', 'Even Day'];
+            return IDX[m] || '—';
+        }
+        // FPP v9.5 day-mask format
+        if ((m & 0x07F00) === 0x07F00) return 'Every day';
+        const names = DAYS.filter(d => (m & d.bit) !== 0).map(d => d.name);
+        return names.length ? names.join(', ') : '—';
+    }
+
+    function formatTime(t) {
+        if (!t) return '—';
+        if (SOLAR_TIMES.has(t)) return t;
+        return t.substring(0, 5); // Display only HH:MM for exact times
+    }
+
+    function formatTimeCell(t, offset) {
+        if (!t) return '—';
+        if (!SOLAR_TIMES.has(t)) return formatTime(t);
+        const mins = Math.round((parseInt(offset, 10) || 0) / 60);
+        if (!mins) return t;
+        return `${t} ${mins > 0 ? '+' : ''}${mins}m`;
+    }
+
+    function toHHMMSS(t) {
+        // Pad a HH:MM value to HH:MM:SS for the API
+        if (!t) return '00:00:00';
+        return t.length === 5 ? t + ':00' : t;
+    }
+
+    function fromHHMMSS(t) {
+        // Trim to HH:MM for <input type="time">
+        return t ? t.substring(0, 5) : '';
+    }
+
+    function setTimeType(which, value) {
+        const typeEl   = document.getElementById(`f-${which}-type`);
+        const timeEl   = document.getElementById(`f-${which}`);
+        const offsetEl = document.getElementById(`f-${which}-offset`);
+        if (SOLAR_TIMES.has(value)) {
+            typeEl.value           = value;
+            timeEl.style.display   = 'none';
+            offsetEl.style.display = '';
+        } else {
+            typeEl.value           = 'exact';
+            timeEl.value           = fromHHMMSS(value);
+            timeEl.style.display   = '';
+            offsetEl.style.display = 'none';
+        }
+    }
+
+    function onTimeTypeChange(which) {
+        const val      = document.getElementById(`f-${which}-type`).value;
+        const timeEl   = document.getElementById(`f-${which}`);
+        const offsetEl = document.getElementById(`f-${which}-offset`);
+        if (val === 'exact') {
+            timeEl.style.display   = '';
+            offsetEl.style.display = 'none';
+        } else {
+            timeEl.style.display   = 'none';
+            offsetEl.style.display = '';
+        }
+    }
+
+    function getTimeValue(which) {
+        const val = document.getElementById(`f-${which}-type`).value;
+        if (val === 'exact') {
+            return { time: toHHMMSS(document.getElementById(`f-${which}`).value), offset: 0 };
+        }
+        const mins = parseInt(document.getElementById(`f-${which}-offset`).value || '0', 10);
+        return { time: val, offset: isNaN(mins) ? 0 : mins * 60 };
+    }
+
+    function getDayMask() {
+        const total = Array.from(document.querySelectorAll('#day-grid input[type=checkbox]'))
+            .filter(cb => cb.checked)
+            .reduce((acc, cb) => acc + parseInt(cb.value, 10), 0);
+        // Simplify common patterns to FPP named indices
+        if (total === 0x07F00) return 7;  // Every day
+        if (total === 0x03E00) return 8;  // Weekdays
+        if (total === 0x04100) return 9;  // Weekend
+        return total;
+    }
+
+    function setDayMask(dayIndex) {
+        const m = parseInt(dayIndex, 10);
+        // Convert named index (0-15) to the corresponding day-mask bits
+        const mask = (m >= 0 && m <= 15) ? (INDEX_TO_MASK[m] || 0) : m;
+        document.querySelectorAll('#day-grid input[type=checkbox]').forEach(cb => {
+            cb.checked = (mask & parseInt(cb.value, 10)) !== 0;
+        });
+    }
+
+    // ── Render table ───────────────────────────────────────────────────────
+    function renderTable(entries) {
+        const tbody = document.getElementById('schedule-body');
+        const table = document.getElementById('schedule-table');
+        const empty = document.getElementById('empty-msg');
+
+        if (!entries.length) {
+            table.hidden = true;
+            empty.hidden = false;
+            return;
+        }
+        table.hidden = false;
+        empty.hidden = true;
+
+        tbody.innerHTML = entries.map((e, i) => {
+            const isOn = e.enabled === '1' || e.enabled === 1;
+            return `<tr class="${isOn ? '' : 'disabled-row'}" data-idx="${i}">
+                <td>
+                    <button class="toggle-btn ${isOn ? 'on' : 'off'}"
+                            data-idx="${i}" data-enabled="${isOn ? 1 : 0}"
+                            title="${isOn ? 'Disable' : 'Enable'}">
+                        ${isOn ? 'On' : 'Off'}
+                    </button>
+                </td>
+                <td>${escHtml(getEntryDisplayName(e))}</td>
+                <td>${formatDays(e.day)}</td>
+                <td>${formatTimeCell(e.startTime, e.startTimeOffset)}</td>
+                <td>${formatTimeCell(e.endTime, e.endTimeOffset)}</td>
+                <td>${e.repeat === '1' || e.repeat === 1 ? 'Yes' : 'No'}</td>
+                <td>
+                    <button class="action-btn btn-edit" data-idx="${i}">Edit</button>
+                    <button class="action-btn btn-delete" data-idx="${i}">Delete</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function escHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    // ── Load schedule ──────────────────────────────────────────────────────
+    async function loadSchedule() {
+        try {
+            const res = await fetch('/api/schedule/list');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load');
+            scheduleEntries = data.entries || [];
+            document.getElementById('loading-msg').hidden = true;
+            renderTable(scheduleEntries);
+        } catch (err) {
+            document.getElementById('loading-msg').textContent = 'Error loading schedule.';
+            showToast('Could not load schedule: ' + err.message, 'error');
+        }
+    }
+
+    // ── Helpers for command-preset entries ────────────────────────────────
+    const COMMAND_PRESETS = new Set(['Turn Off Lights']);
+
+    function getEntryKey(entry) {
+        // Returns the value used in the <select> and sent to the backend.
+        if (!entry.playlist && entry.command === 'Trigger Command Preset' && entry.args && entry.args.length) {
+            return entry.args[0];
+        }
+        return entry.playlist || '';
+    }
+
+    function getEntryDisplayName(entry) {
+        return getEntryKey(entry) || entry.command || '—';
+    }
+
+    // ── Load playlists into select ─────────────────────────────────────────
+    async function loadPlaylists() {
+        try {
+            const [playlistRes, seqRes] = await Promise.all([
+                fetch('/api/playlists'),
+                fetch('/api/sequences'),
+            ]);
+            const data = await playlistRes.json();
+            const seqData = await seqRes.json().catch(() => ({}));
+            const hasSequences = (seqData.sequences || []).length > 0;
+            const sel = document.getElementById('f-playlist');
+            const playlists = (data.playlists || []).filter(p => !COMMAND_PRESETS.has(p) && (hasSequences || p !== 'Current-Sequence'));
+            sel.innerHTML =
+                (playlists.length
+                    ? playlists.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('')
+                    : '<option value="" disabled>No playlists found</option>');
+        } catch {
+            document.getElementById('f-playlist').innerHTML =
+                '<option value="">Could not load playlists</option>';
+        }
+    }
+
+    // ── Modal helpers ──────────────────────────────────────────────────────
+    function openModal(title, idx, entry) {
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('edit-idx').value = idx;
+        document.getElementById('modal-overlay').style.display = 'flex';
+
+        if (entry) {
+            const sel = document.getElementById('f-playlist');
+            const key = getEntryKey(entry);
+            for (const opt of sel.options) {
+                if (opt.value === key) { opt.selected = true; break; }
+            }
+            setDayMask(entry.day);
+            setTimeType('start', entry.startTime);
+            const startMins = Math.round((parseInt(entry.startTimeOffset, 10) || 0) / 60);
+            if (startMins) document.getElementById('f-start-offset').value = startMins;
+            setTimeType('end', entry.endTime || '23:59:59');
+            const endMins = Math.round((parseInt(entry.endTimeOffset, 10) || 0) / 60);
+            if (endMins) document.getElementById('f-end-offset').value = endMins;
+            document.getElementById('f-stop-type').value = String(entry.stopType ?? 0);
+            document.getElementById('f-repeat').checked  = entry.repeat  === '1' || entry.repeat  === 1;
+            document.getElementById('f-enabled').checked = entry.enabled === '1' || entry.enabled === 1;
+        } else {
+            document.getElementById('entry-form').reset();
+            document.getElementById('f-enabled').checked = true;
+            document.getElementById('f-repeat').checked  = true;
+            document.querySelectorAll('#day-grid input[type=checkbox]').forEach(cb => cb.checked = true);
+            document.getElementById('f-start-type').value           = 'exact';
+            document.getElementById('f-start').style.display        = '';
+            document.getElementById('f-start-offset').style.display = 'none';
+            document.getElementById('f-end-type').value             = 'exact';
+            document.getElementById('f-end').style.display          = '';
+            document.getElementById('f-end-offset').style.display   = 'none';
+            document.getElementById('f-stop-type').value            = '0';
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+    }
+
+    // ── Save entry ─────────────────────────────────────────────────────────
+    async function saveEntry(e) {
+        e.preventDefault();
+
+        const idx  = parseInt(document.getElementById('edit-idx').value, 10);
+        const mask = getDayMask();
+
+        if (!mask) { showToast('Select at least one day.', 'error'); return; }
+
+        const startType = document.getElementById('f-start-type').value;
+        const endType   = document.getElementById('f-end-type').value;
+        if (startType === 'exact' && !document.getElementById('f-start').value) {
+            showToast('Please set a start time.', 'error'); return;
+        }
+        if (endType === 'exact' && !document.getElementById('f-end').value) {
+            showToast('Please set an end time.', 'error'); return;
+        }
+
+        const startT  = getTimeValue('start');
+        const endT    = getTimeValue('end');
+        const selVal  = document.getElementById('f-playlist').value;
+        const payload = {
+            day:             mask,
+            startTime:       startT.time,
+            startTimeOffset: startT.offset,
+            endTime:         endT.time,
+            endTimeOffset:   endT.offset,
+            stopType:        parseInt(document.getElementById('f-stop-type').value, 10),
+            repeat:          document.getElementById('f-repeat').checked  ? 1 : 0,
+            enabled:         document.getElementById('f-enabled').checked ? 1 : 0,
+        };
+        // Command presets are stored differently in FPP's schedule
+        if (COMMAND_PRESETS.has(selVal)) {
+            payload.playlist = '';
+            payload.command  = 'Trigger Command Preset';
+            payload.args     = [selVal];
+        } else {
+            payload.playlist = selVal;
+        }
+
+        const isEdit = idx >= 0;
+        const url    = isEdit ? `/api/schedule/entry/${idx}` : '/api/schedule/entry';
+        const method = isEdit ? 'PUT' : 'POST';
+
+        try {
+            const res  = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+            scheduleEntries = data.entries || scheduleEntries;
+            renderTable(scheduleEntries);
+            closeModal();
+            showToast(isEdit ? 'Entry updated.' : 'Entry added.', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    // ── Toggle enabled ─────────────────────────────────────────────────────
+    async function toggleEnabled(idx) {
+        const entry   = { ...scheduleEntries[idx] };
+        const current = entry.enabled === '1' || entry.enabled === 1;
+        entry.enabled = current ? '0' : '1';
+
+        try {
+            const key     = getEntryKey(entry);
+            const toggled = {
+                day:             parseInt(entry.day, 10),
+                startTime:       entry.startTime,
+                startTimeOffset: parseInt(entry.startTimeOffset, 10) || 0,
+                endTime:         entry.endTime   || '23:59:59',
+                endTimeOffset:   parseInt(entry.endTimeOffset,   10) || 0,
+                stopType:        parseInt(entry.stopType,         10) || 0,
+                repeat:          parseInt(entry.repeat, 10),
+                enabled:         current ? 0 : 1,
+            };
+            if (COMMAND_PRESETS.has(key)) {
+                toggled.playlist = '';
+                toggled.command  = 'Trigger Command Preset';
+                toggled.args     = [key];
+            } else {
+                toggled.playlist = key;
+            }
+            const res  = await fetch(`/api/schedule/entry/${idx}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(toggled),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Toggle failed');
+            scheduleEntries = data.entries || scheduleEntries;
+            renderTable(scheduleEntries);
+            showToast(`Entry ${current ? 'disabled' : 'enabled'}.`, 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    // ── Delete ─────────────────────────────────────────────────────────────
+    async function deleteEntry(idx) {
+        if (!confirm(`Delete the "${getEntryDisplayName(scheduleEntries[idx])}" entry?`)) return;
+        try {
+            const res  = await fetch(`/api/schedule/entry/${idx}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Delete failed');
+            scheduleEntries = data.entries || scheduleEntries;
+            renderTable(scheduleEntries);
+            showToast('Entry deleted.', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    // ── Event wiring ───────────────────────────────────────────────────────
+    document.getElementById('btn-add').addEventListener('click', () => {
+        openModal('Add Schedule Entry', -1, null);
+    });
+
+    document.getElementById('btn-cancel').addEventListener('click', closeModal);
+
+    document.getElementById('modal-overlay').addEventListener('click', function (e) {
+        if (e.target === this) closeModal();
+    });
+
+    document.getElementById('entry-form').addEventListener('submit', saveEntry);
+    document.getElementById('f-start-type').addEventListener('change', () => onTimeTypeChange('start'));
+    document.getElementById('f-end-type').addEventListener('change',   () => onTimeTypeChange('end'));
+
+    document.getElementById('schedule-body').addEventListener('click', e => {
+        const toggle = e.target.closest('.toggle-btn');
+        const edit   = e.target.closest('.btn-edit');
+        const del    = e.target.closest('.btn-delete');
+
+        if (toggle) {
+            toggleEnabled(parseInt(toggle.dataset.idx, 10));
+        } else if (edit) {
+            const idx = parseInt(edit.dataset.idx, 10);
+            openModal('Edit Schedule Entry', idx, scheduleEntries[idx]);
+        } else if (del) {
+            deleteEntry(parseInt(del.dataset.idx, 10));
+        }
+    });
+
+    // ── Init ───────────────────────────────────────────────────────────────
+    loadPlaylists();
+    loadSchedule();
+</script>
+{% endblock %}

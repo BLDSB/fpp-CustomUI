@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block extra_head %}
+<style>
+    .settings-wrap { max-width: 560px; display: flex; flex-direction: column; gap: 1.25rem; }
+
+    .settings-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+    }
+    .settings-card h2 {
+        font-size: 0.72rem;
+        color: var(--text-dim);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-dim);
+    }
+
+    .form-field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .form-field label { font-size: 0.82rem; color: var(--text-dim); }
+    .form-field input[type="text"],
+    .form-field input[type="url"],
+    .form-field input[type="password"] {
+        background: rgba(0,0,0,0.35);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.5rem 0.8rem;
+        color: var(--text);
+        font-size: 0.9rem;
+        width: 100%;
+        transition: border-color 0.15s;
+    }
+    .form-field input:focus { outline: none; border-color: var(--accent); }
+    .form-field .hint { font-size: 0.74rem; color: var(--text-dim); line-height: 1.4; }
+
+    .preview-img {
+        margin-top: 0.5rem;
+        max-height: 72px;
+        max-width: 100%;
+        border-radius: 6px;
+        border: 1px solid var(--border-dim);
+        object-fit: contain;
+        background: rgba(0,0,0,0.25);
+    }
+
+    .btn-save {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 7px;
+        padding: 0.6rem 1.6rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+    }
+    .btn-save:hover { opacity: 0.85; }
+    .btn-save:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Color picker rows */
+    .color-row {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+    }
+    .color-row input[type="color"] {
+        width: 44px;
+        height: 44px;
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 2px;
+        background: none;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+    .color-row .color-info { display: flex; flex-direction: column; gap: 0.15rem; }
+    .color-row .color-name { font-size: 0.85rem; color: var(--text); font-weight: 500; }
+    .color-row .color-hint { font-size: 0.74rem; color: var(--text-dim); }
+    .btn-reset-color {
+        margin-left: auto;
+        background: none;
+        border: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        border-radius: 5px;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.74rem;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-reset-color:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* Zone rows */
+    .zone-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+    }
+    .zone-row .zone-fpp-label {
+        font-size: 0.74rem;
+        color: var(--text-dim);
+        width: 52px;
+        flex-shrink: 0;
+    }
+    .zone-row input[type="text"] {
+        flex: 1;
+        background: rgba(0,0,0,0.35);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.4rem 0.7rem;
+        color: var(--text);
+        font-size: 0.88rem;
+        transition: border-color 0.15s;
+    }
+    .zone-row input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    .zone-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.78rem;
+        color: var(--text-dim);
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .zone-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+    .zone-row.is-hidden input[type="text"] { opacity: 0.4; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-heading-row" style="margin-bottom:1.5rem">
+    <div class="page-heading">
+        <h1><em>Settings</em></h1>
+        <p class="sub">Appearance &amp; Customization</p>
+    </div>
+</div>
+
+<div class="settings-wrap">
+
+    <!-- Branding -->
+    <div class="settings-card">
+        <h2>Branding</h2>
+
+        <div class="form-field">
+            <label for="s-site-name">Site Name</label>
+            <input type="text" id="s-site-name" maxlength="64"
+                   value="{{ settings.get('site_name', '') }}"
+                   placeholder="FPP Control">
+        </div>
+
+        <div class="form-field">
+            <label for="s-logo-url">Logo URL</label>
+            <input type="text" id="s-logo-url"
+                   value="{{ (settings.get('logo_url') or '') | e }}"
+                   placeholder="https://example.com/logo.png">
+            <span class="hint">Displayed in the nav bar beside the site name. Leave blank to hide.</span>
+            <img id="logo-preview" src="{{ (settings.get('logo_url') or '') | e }}"
+                 alt="Logo preview" class="preview-img"
+                 style="{{ '' if settings.get('logo_url') else 'display:none' }}">
+        </div>
+    </div>
+
+    <!-- Colors -->
+    <div class="settings-card">
+        <h2>Colors</h2>
+
+        <div class="form-field">
+            <div class="color-row">
+                <input type="color" id="s-accent-color"
+                       value="{{ settings.get('accent_color') or '#e94560' }}">
+                <div class="color-info">
+                    <span class="color-name">Accent / Buttons</span>
+                    <span class="color-hint">Buttons, active links, highlights</span>
+                </div>
+                <button type="button" class="btn-reset-color" data-target="s-accent-color" data-default="#e94560">Reset</button>
+            </div>
+        </div>
+
+        <div class="form-field">
+            <div class="color-row">
+                <input type="color" id="s-nav-color"
+                       value="{{ settings.get('nav_color') or '#040612' }}">
+                <div class="color-info">
+                    <span class="color-name">Top Bar</span>
+                    <span class="color-hint">Navigation bar background</span>
+                </div>
+                <button type="button" class="btn-reset-color" data-target="s-nav-color" data-default="#040612">Reset</button>
+            </div>
+        </div>
+
+        <div class="form-field">
+            <div class="color-row">
+                <input type="color" id="s-nav-link-color"
+                       value="{{ settings.get('nav_link_color') or '#6e7090' }}">
+                <div class="color-info">
+                    <span class="color-name">Nav Buttons</span>
+                    <span class="color-hint">Text color of navigation links</span>
+                </div>
+                <button type="button" class="btn-reset-color" data-target="s-nav-link-color" data-default="#6e7090">Reset</button>
+            </div>
+        </div>
+
+        <div class="form-field">
+            <div class="color-row">
+                <input type="color" id="s-text-color"
+                       value="{{ settings.get('text_color') or '#dde0f0' }}">
+                <div class="color-info">
+                    <span class="color-name">Text</span>
+                    <span class="color-hint">Primary body text color</span>
+                </div>
+                <button type="button" class="btn-reset-color" data-target="s-text-color" data-default="#dde0f0">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Background -->
+    <div class="settings-card">
+        <h2>Background</h2>
+
+        <div class="form-field">
+            <label for="s-bg-url">Background Image URL</label>
+            <input type="text" id="s-bg-url"
+                   value="{{ (settings.get('bg_image_url') or '') | e }}"
+                   placeholder="https://example.com/background.jpg">
+            <span class="hint">Full-page background. A dark overlay is applied automatically for readability.
+                Leave blank to use the default solid dark background.</span>
+            <img id="bg-preview" src="{{ (settings.get('bg_image_url') or '') | e }}"
+                 alt="Background preview" class="preview-img"
+                 style="{{ '' if settings.get('bg_image_url') else 'display:none' }}">
+        </div>
+    </div>
+
+    <div>
+        <button id="btn-save" class="btn-save">Save Settings</button>
+    </div>
+
+    <!-- Zones -->
+    <div class="settings-card">
+        <h2>Color Zones</h2>
+        <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
+            Rename zones or hide unused ones. These names appear on the Colors page.
+            Zone names here are display-only — the FPP Pixel Overlay Model names
+            (<em>All</em>, <em>Zone 1</em>…<em>Zone 15</em>) must match what's configured in FPP.
+        </p>
+        <div id="zones-list" style="display:flex;flex-direction:column;gap:0.6rem;margin-top:0.25rem"></div>
+        <div>
+            <button id="btn-save-zones" class="btn-save">Save Zones</button>
+        </div>
+    </div>
+
+    <!-- Security -->
+    <div class="settings-card">
+        <h2>Security</h2>
+
+        <div class="form-field">
+            <label for="s-cur-pw">Current Password</label>
+            <input type="password" id="s-cur-pw" autocomplete="current-password">
+        </div>
+
+        <div class="form-field">
+            <label for="s-new-pw">New Password</label>
+            <input type="password" id="s-new-pw" autocomplete="new-password">
+            <span class="hint">Minimum 8 characters.</span>
+        </div>
+
+        <div class="form-field">
+            <label for="s-confirm-pw">Confirm New Password</label>
+            <input type="password" id="s-confirm-pw" autocomplete="new-password">
+        </div>
+
+        <div>
+            <button id="btn-change-pw" class="btn-save">Change Password</button>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    'use strict';
+
+    function wirePreview(inputId, previewId) {
+        const input   = document.getElementById(inputId);
+        const preview = document.getElementById(previewId);
+        input.addEventListener('input', () => {
+            const val = input.value.trim();
+            if (val) { preview.src = val; preview.style.display = ''; }
+            else     { preview.style.display = 'none'; preview.src = ''; }
+        });
+    }
+    wirePreview('s-logo-url', 'logo-preview');
+    wirePreview('s-bg-url',   'bg-preview');
+
+    // Live color preview — update CSS vars on the page as user picks
+    document.getElementById('s-accent-color').addEventListener('input', e => {
+        document.body.style.setProperty('--accent', e.target.value);
+    });
+    document.getElementById('s-nav-color').addEventListener('input', e => {
+        document.body.style.setProperty('--nav-bg', e.target.value);
+    });
+    document.getElementById('s-nav-link-color').addEventListener('input', e => {
+        document.body.style.setProperty('--nav-link', e.target.value);
+    });
+    document.getElementById('s-text-color').addEventListener('input', e => {
+        document.body.style.setProperty('--text', e.target.value);
+    });
+
+    // Reset buttons
+    document.querySelectorAll('.btn-reset-color').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const input = document.getElementById(btn.dataset.target);
+            const def   = btn.dataset.default;
+            input.value = def;
+            input.dispatchEvent(new Event('input'));
+        });
+    });
+
+    // ── Zones ──────────────────────────────────────────────────
+    const zonesList = document.getElementById('zones-list');
+    const zonesData = {{ zones | tojson }};
+
+    function renderZones(zones) {
+        zonesList.innerHTML = '';
+        zones.forEach(z => {
+            const row = document.createElement('div');
+            row.className = 'zone-row' + (z.hidden ? ' is-hidden' : '');
+            row.dataset.slot = z.slot;
+            row.innerHTML = `
+                <span class="zone-fpp-label">${z.fpp_model_name}</span>
+                <input type="text" value="${escHtml(z.display_name)}" maxlength="64"
+                       placeholder="${z.fpp_model_name}" aria-label="Display name for ${z.fpp_model_name}">
+                <label class="zone-toggle">
+                    <input type="checkbox" ${z.hidden ? 'checked' : ''}> Hide
+                </label>
+            `;
+            const checkbox = row.querySelector('input[type="checkbox"]');
+            checkbox.addEventListener('change', () => {
+                row.classList.toggle('is-hidden', checkbox.checked);
+            });
+            zonesList.appendChild(row);
+        });
+    }
+
+    function escHtml(str) {
+        return String(str).replace(/[&<>"']/g, c =>
+            ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    renderZones(zonesData);
+
+    document.getElementById('btn-save-zones').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-save-zones');
+        btn.disabled = true;
+        const payload = Array.from(zonesList.querySelectorAll('.zone-row')).map(row => ({
+            slot:         parseInt(row.dataset.slot),
+            display_name: row.querySelector('input[type="text"]').value.trim() || row.querySelector('input[type="text"]').placeholder,
+            hidden:       row.querySelector('input[type="checkbox"]').checked,
+        }));
+        try {
+            const res = await fetch('/api/zones', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+            showToast('Zones saved', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btn-change-pw').addEventListener('click', async () => {
+        const btn     = document.getElementById('btn-change-pw');
+        const curPw   = document.getElementById('s-cur-pw').value;
+        const newPw   = document.getElementById('s-new-pw').value;
+        const confirm = document.getElementById('s-confirm-pw').value;
+
+        if (!curPw || !newPw || !confirm) {
+            showToast('Please fill in all password fields.', 'error');
+            return;
+        }
+        if (newPw !== confirm) {
+            showToast('New passwords do not match.', 'error');
+            return;
+        }
+        if (newPw.length < 8) {
+            showToast('New password must be at least 8 characters.', 'error');
+            return;
+        }
+
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/change-password', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ current_password: curPw, new_password: newPw }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to change password.');
+            showToast('Password changed successfully.', 'success');
+            document.getElementById('s-cur-pw').value    = '';
+            document.getElementById('s-new-pw').value    = '';
+            document.getElementById('s-confirm-pw').value = '';
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btn-save').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-save');
+        btn.disabled = true;
+        try {
+            const res = await fetch('/api/settings', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    site_name:    document.getElementById('s-site-name').value.trim(),
+                    logo_url:     document.getElementById('s-logo-url').value.trim(),
+                    bg_image_url: document.getElementById('s-bg-url').value.trim(),
+                    accent_color: document.getElementById('s-accent-color').value,
+                    nav_color:    document.getElementById('s-nav-color').value,
+                    nav_link_color: document.getElementById('s-nav-link-color').value,
+                    text_color:   document.getElementById('s-text-color').value,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+            showToast('Settings saved — reload the page to see changes', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+})();
+</script>
+{% endblock %}

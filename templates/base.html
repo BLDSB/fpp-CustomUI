@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FPP Control{% endblock %}</title>
+    <style>
+        /* ── Reset & Design Tokens ─────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --accent:      #e94560;
+            --accent-glow: color-mix(in srgb, var(--accent) 20%, transparent);
+            --amber:       #f0a020;
+            --bg:          #07091a;
+            --nav-bg:      #040612;
+            --surface:     rgba(14, 20, 48, 0.82);
+            --surface-hi:  rgba(18, 26, 60, 0.92);
+            --border:      color-mix(in srgb, var(--accent) 25%, transparent);
+            --border-dim:  rgba(255, 255, 255, 0.07);
+            --text:        #dde0f0;
+            --text-dim:    #6e7090;
+            --nav-link:    #6e7090;
+            --radius:      10px;
+            --blur:        blur(16px);
+        }
+
+        /* ── Body ──────────────────────────────────────────────────── */
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bg);
+        }
+
+        /* ── Background image layers ───────────────────────────────── */
+        .bg-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--bg-image);
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }
+        .bg-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            background: linear-gradient(
+                155deg,
+                rgba(7, 9, 26, 0.91) 0%,
+                rgba(7, 9, 26, 0.76) 50%,
+                rgba(7, 9, 26, 0.91) 100%
+            );
+        }
+        nav, main, #toast { position: relative; z-index: 2; }
+
+        /* ── Navigation ────────────────────────────────────────────── */
+        nav {
+            background: color-mix(in srgb, var(--nav-bg) 92%, transparent);
+            border-bottom: 1px solid var(--border-dim);
+            padding: 0 1.75rem;
+            height: 62px;
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            text-decoration: none;
+            flex-shrink: 0;
+            min-width: 0;
+        }
+        .nav-logo {
+            height: 38px;
+            width: auto;
+            object-fit: contain;
+            border-radius: 5px;
+            flex-shrink: 0;
+        }
+        .nav-wordmark {
+            font-size: 0.95rem;
+            font-weight: 800;
+            color: var(--accent);
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        nav ul {
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.1rem;
+        }
+        .nav-main  { justify-self: center; }
+        .nav-utils { justify-self: end; }
+        .nav-clock {
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-dim);
+            padding: 0.4rem 0.6rem;
+            white-space: nowrap;
+            user-select: none;
+        }
+        nav ul a {
+            display: block;
+            color: var(--nav-link);
+            text-decoration: none;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            padding: 0.4rem 0.9rem;
+            border-radius: 6px;
+            transition: color 0.15s, background 0.15s;
+            white-space: nowrap;
+        }
+        nav ul a:hover       { color: var(--text); background: rgba(255,255,255,0.05); }
+        nav ul a.nav-active  { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+        nav ul a.nav-icon    { padding: 0.4rem 0.65rem; font-size: 1.05rem; letter-spacing: 0; }
+        nav ul a.nav-icon:hover { color: var(--amber); background: rgba(255,255,255,0.05); }
+        nav ul a.nav-logout  { border: 1px solid var(--border-dim); }
+        nav ul a.nav-logout:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── Main ──────────────────────────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 2rem 1.75rem;
+            max-width: 1060px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        /* ── Heading utilities ─────────────────────────────────────── */
+        .page-heading { margin-bottom: 1.5rem; }
+        .page-heading h1 {
+            font-size: 1.55rem;
+            font-weight: 800;
+            letter-spacing: 0.01em;
+        }
+        .page-heading h1 em   { color: var(--accent); font-style: normal; }
+        .page-heading .sub    {
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+            margin-top: 0.2rem;
+        }
+        .page-heading-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* ── Card ──────────────────────────────────────────────────── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border-dim);
+            border-radius: var(--radius);
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+        }
+
+        /* ── Toast ─────────────────────────────────────────────────── */
+        #toast {
+            position: fixed;
+            bottom: 1.75rem;
+            right: 1.75rem;
+            padding: 0.7rem 1.15rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s, transform 0.2s;
+            transform: translateY(6px);
+            z-index: 999;
+            max-width: 300px;
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+        }
+        #toast.show    { opacity: 1; transform: translateY(0); }
+        #toast.success { background: rgba(18,52,34,0.95); border: 1px solid #2ecc71; color: #88f0b0; }
+        #toast.error   { background: rgba(62,14,24,0.95);  border: 1px solid var(--accent); color: #f5a0b0; }
+
+        /* ── Scrollbar ─────────────────────────────────────────────── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(233,69,96,0.28); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(233,69,96,0.55); }
+        /* ── Mobile nav toggle button ──────────────────────────────── */
+        #nav-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text);
+            font-size: 1.45rem;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0.3rem 0.5rem;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+        #nav-toggle:hover { background: rgba(255,255,255,0.07); }
+
+        /* ── Responsive breakpoints ────────────────────────────────── */
+        @media (max-width: 700px) {
+            nav {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                height: auto;
+                min-height: 56px;
+                padding: 0.55rem 1rem;
+                gap: 0;
+            }
+            .nav-brand { flex: 1; min-width: 0; }
+            #nav-toggle { display: block; }
+
+            /* Hidden by default; shown when nav has .nav-open */
+            .nav-main,
+            .nav-utils {
+                display: none;
+                width: 100%;
+                flex-direction: column;
+                gap: 0;
+            }
+            nav.nav-open .nav-main {
+                display: flex;
+                border-top: 1px solid var(--border-dim);
+                padding-top: 0.35rem;
+                margin-top: 0.35rem;
+            }
+            nav.nav-open .nav-utils {
+                display: flex;
+                border-top: 1px solid rgba(255,255,255,0.04);
+                padding-bottom: 0.4rem;
+            }
+            nav ul { flex-direction: column; gap: 0; width: 100%; }
+            nav ul a {
+                padding: 0.75rem 0.6rem;
+                font-size: 0.9rem;
+                border-radius: 4px;
+                border-bottom: 1px solid rgba(255,255,255,0.04);
+            }
+            nav ul a.nav-active {
+                box-shadow: none;
+                border-left: 3px solid var(--accent);
+                padding-left: calc(0.6rem - 3px);
+            }
+            nav ul a.nav-logout { border: none; }
+            .nav-wordmark { font-size: 0.85rem; }
+
+            main { padding: 1.25rem 1rem; }
+
+            #toast {
+                left: 1rem;
+                right: 1rem;
+                bottom: 1rem;
+                max-width: none;
+            }
+        }    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('nav_color') %}--nav-bg: {{ site_settings.nav_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }}; {% endif %}{% if site_settings.get('nav_link_color') %}--nav-link: {{ site_settings.nav_link_color | e }};{% endif %}">
+
+    {% if site_settings.get('bg_image_url') %}
+    <div class="bg-layer"></div>
+    <div class="bg-overlay"></div>
+    {% endif %}
+
+    <nav>
+        <a href="{{ url_for('main.index') }}" class="nav-brand">
+            {% if site_settings.get('logo_url') %}
+            <img src="{{ site_settings.logo_url | e }}" alt="Logo" class="nav-logo">
+            {% endif %}
+            <span class="nav-wordmark">{{ site_settings.get('site_name') or 'FPP Control' }}</span>
+        </a>
+        <button id="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
+        <ul class="nav-main">
+            <li><a href="{{ url_for('main.controls') }}">Controls</a></li>
+            <li><a href="{{ url_for('colors.colors_page') }}">Custom Color</a></li>
+            <li><a href="{{ url_for('scheduler.schedule_page') }}">Schedule</a></li>
+        </ul>
+        <ul class="nav-utils">
+            <li><span id="nav-clock" class="nav-clock">--:--:-- --</span></li>
+            <li><a href="{{ url_for('settings.settings_page') }}" class="nav-icon" title="Settings">⚙</a></li>
+            <li><a href="{{ url_for('auth.logout') }}" class="nav-logout">Logout</a></li>
+        </ul>
+    </nav>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <script>
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'show ' + (type || 'success');
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => { toast.className = ''; }, 3500);
+        }
+        // Mark active nav link
+        (function () {
+            const path = location.pathname;
+            document.querySelectorAll('nav ul a:not(.nav-icon):not(.nav-logout)').forEach(a => {
+                const href = a.getAttribute('href');
+                if (href && (path === href || (href !== '/' && path.startsWith(href)))) {
+                    a.classList.add('nav-active');
+                }
+            });
+        })();
+
+        // Mobile hamburger menu
+        (function () {
+            const toggle = document.getElementById('nav-toggle');
+            const navEl  = document.querySelector('nav');
+            toggle.addEventListener('click', () => {
+                const open = navEl.classList.toggle('nav-open');
+                toggle.setAttribute('aria-expanded', open);
+            });
+            // Close menu when any nav link is tapped
+            navEl.querySelectorAll('a').forEach(a => {
+                a.addEventListener('click', () => {
+                    navEl.classList.remove('nav-open');
+                    toggle.setAttribute('aria-expanded', 'false');
+                });
+            });
+        })();
+
+        // Live clock
+        (function () {
+            const el = document.getElementById('nav-clock');
+            if (!el) return;
+            function tick() {
+                const now = new Date();
+                let h = now.getHours();
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                h = h % 12 || 12;
+                const m = String(now.getMinutes()).padStart(2, '0');
+                const s = String(now.getSeconds()).padStart(2, '0');
+                el.textContent = `${h}:${m}:${s} ${ampm}`;
+            }
+            tick();
+            setInterval(tick, 1000);
+        })();
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

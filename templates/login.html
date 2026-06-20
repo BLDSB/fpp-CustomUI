@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_settings.get('site_name') or 'FPP Control' }} — Login</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --accent:     #e94560;
+            --bg:         #07091a;
+            --surface:    rgba(14, 20, 48, 0.82);
+            --border-dim: rgba(255, 255, 255, 0.07);
+            --text:       #dde0f0;
+            --text-dim:   #6e7090;
+            --blur:       blur(16px);
+        }
+
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        /* ── Background image (mirrors base.html) ── */
+        .bg-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--bg-image);
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }
+        .bg-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            background: linear-gradient(
+                155deg,
+                rgba(7, 9, 26, 0.91) 0%,
+                rgba(7, 9, 26, 0.76) 50%,
+                rgba(7, 9, 26, 0.91) 100%
+            );
+        }
+
+        .login-wrap {
+            position: relative;
+            z-index: 2;
+            width: 100%;
+            padding: 1rem;
+        }
+
+        .login-card {
+            background: var(--surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 10px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 360px;
+            margin: 0 auto;
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+        }
+
+        h1 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 1.75rem;
+            text-align: center;
+            color: var(--accent);
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            margin-bottom: 0.4rem;
+            color: var(--text-dim);
+        }
+
+        input[type="password"] {
+            width: 100%;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid var(--border-dim);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text);
+            font-size: 1rem;
+            margin-bottom: 1.25rem;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+
+        button[type="submit"] {
+            width: 100%;
+            padding: 0.7rem;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+        button[type="submit"]:hover { opacity: 0.85; }
+
+        .error {
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+            border: 1px solid var(--accent);
+            color: #f5a0b0;
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }};{% endif %}">
+
+    {% if site_settings.get('bg_image_url') %}
+    <div class="bg-layer"></div>
+    <div class="bg-overlay"></div>
+    {% endif %}
+
+    <div class="login-wrap">
+        <div class="login-card">
+            <h1>{{ site_settings.get('site_name') or 'FPP Control' }}</h1>
+            {% if error %}
+            <div class="error">{{ error }}</div>
+            {% endif %}
+            <form method="post" action="{{ url_for('auth.login') }}">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" autofocus required>
+                <button type="submit">Log In</button>
+            </form>
+        </div>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,10 @@
+.env
+*.db
+instance/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.claude/
+.github/agents/
+.github/prompts/

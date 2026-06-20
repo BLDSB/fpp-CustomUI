@@ -1,0 +1,393 @@
+{% extends "base.html" %}
+{% block title %}Controls{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* ── Status banner ── */
+    #status-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 1.75rem;
+        font-size: 0.88rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+    }
+    #status-text { color: var(--text-dim); }
+    #status-text .label   { color: var(--text); font-weight: 600; }
+    #status-text .playing { color: var(--accent); font-weight: 600; }
+
+    /* ── Section header ── */
+    .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .section-header h2 {
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+    }
+
+    /* ── Playlist grid ── */
+    #playlist-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+        gap: 0.65rem;
+    }
+    .playlist-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .playlist-card:hover {
+        border-color: var(--accent);
+        box-shadow: 0 0 14px rgba(233, 69, 96, 0.12);
+    }
+    .playlist-card.active-playlist {
+        border-color: var(--accent);
+        background: rgba(233, 69, 96, 0.07);
+        box-shadow: 0 0 18px rgba(233, 69, 96, 0.16);
+    }
+    .playlist-name {
+        font-size: 0.88rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .btn-play {
+        flex-shrink: 0;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 5px;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+    }
+    .btn-play:hover    { opacity: 0.85; }
+    .btn-play:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Stop button ── */
+    #btn-stop {
+        flex-shrink: 0;
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+        border-radius: 5px;
+        padding: 0.35rem 0.85rem;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+        white-space: nowrap;
+    }
+    #btn-stop:hover    { background: var(--accent); color: #fff; }
+    #btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .empty-state { color: var(--text-dim); font-size: 0.88rem; padding: 1rem 0; }
+
+    /* ── Loop toggle pill ── */
+    .toggle-pill {
+        background: rgba(46,204,113,0.15);
+        color: #2ecc71;
+        border: 1px solid rgba(46,204,113,0.3);
+        border-radius: 12px;
+        padding: 0.2rem 0.65rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+        white-space: nowrap;
+    }
+    .toggle-pill.off {
+        background: rgba(255,255,255,0.06);
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1><em>Controls</em></h1>
+</div>
+
+<!-- Status banner -->
+<div id="status-banner">
+    <span id="status-text"><span class="label">Status:</span> loading…</span>
+    <button id="btn-stop" disabled>&#9632; Stop</button>
+</div>
+
+<!-- Playlist list -->
+<div class="section-header">
+    <h2>Playlists</h2>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+        <button id="btn-loop" class="toggle-pill" title="Toggle playlist looping">&#8635; Loop: On</button>
+        <button id="btn-refresh" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:0.82rem;padding:0.2rem 0.4rem;border-radius:4px;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-dim)'">&#8635; Refresh</button>
+    </div>
+</div>
+<div id="playlist-grid"><p class="empty-state">Loading playlists…</p></div>
+
+<!-- Sequence list (hidden until sequences are confirmed present) -->
+<div id="sequence-section" style="display:none;">
+    <div class="section-header" style="margin-top:2rem;">
+        <h2>Sequences</h2>
+    </div>
+    <div id="sequence-grid"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    'use strict';
+
+    const grid = document.getElementById('playlist-grid');
+    const statusText = document.getElementById('status-text');
+    const btnStop = document.getElementById('btn-stop');
+    const btnLoop = document.getElementById('btn-loop');
+    let currentPlaylist = null;
+    let statusPollTimer = null;
+    let activeScene = null;
+    let hasSequences = false;
+
+    // ── Loop state (persisted in localStorage) ─────────────────────
+    let loopEnabled = localStorage.getItem('fpp-loop') !== 'false'; // default ON
+
+    function syncLoopButton() {
+        btnLoop.textContent = loopEnabled ? '\u21BB Loop: On' : '\u21BB Loop: Off';
+        btnLoop.classList.toggle('off', !loopEnabled);
+    }
+    syncLoopButton();
+
+    btnLoop.addEventListener('click', () => {
+        loopEnabled = !loopEnabled;
+        localStorage.setItem('fpp-loop', loopEnabled);
+        syncLoopButton();
+    });
+
+    // ── Helpers ────────────────────────────────────────────────
+    async function apiFetch(url, method = 'GET', body = null) {
+        const opts = {
+            method,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        };
+        if (body !== null) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch(url, opts);
+        if (!resp.ok) {
+            const b = await resp.json().catch(() => ({}));
+            throw new Error(b.error || `HTTP ${resp.status}`);
+        }
+        return resp.json();
+    }
+
+    // ── Render playlists ───────────────────────────────────────
+    function renderPlaylists(names) {
+        if (!names.length) {
+            grid.innerHTML = '<p class="empty-state">No playlists found on FPP.</p>';
+            return;
+        }
+        grid.innerHTML = names.map(name => `
+            <div class="playlist-card${name === currentPlaylist ? ' active-playlist' : ''}" data-name="${escHtml(name)}">
+                <span class="playlist-name" title="${escHtml(name)}">${escHtml(name)}</span>
+                <button class="btn-play" data-name="${escHtml(name)}" aria-label="Play ${escHtml(name)}">&#9654; Play</button>
+            </div>
+        `).join('');
+    }
+
+    function escHtml(str) {
+        return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // ── Load playlists ─────────────────────────────────────────
+    async function loadPlaylists() {
+        try {
+            const data = await apiFetch('/api/playlists');
+            renderPlaylists((data.playlists || []).filter(p => p !== 'Turn Off Lights' && (!hasSequences ? p !== 'Current-Sequence' : true)));
+        } catch (err) {
+            grid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+            showToast(err.message, 'error');
+        }
+    }
+
+    // ── Poll FPP status ────────────────────────────────────────
+    async function pollStatus() {
+        try {
+            const s = await apiFetch('/api/fppd/status');
+            const mode = s.mode_name || s.status || 'unknown';
+            const rawPlaylist = s.current_playlist?.playlist || '';
+            const isTempSeq = rawPlaylist === 'Current-Sequence';
+            const rawSeq = (s.current_sequence || '').replace(/\.fseq$/i, '');
+            const displayName = isTempSeq ? (rawSeq || null) : (rawPlaylist || rawSeq || null);
+            currentPlaylist = displayName;
+
+            if (displayName) {
+                // FPP is playing a real playlist/sequence — it takes precedence.
+                activeScene = null;
+                const pos = (!isTempSeq && s.current_playlist?.position !== undefined)
+                    ? ` — entry ${s.current_playlist.position + 1}`
+                    : '';
+                statusText.innerHTML = `<span class="label">Status:</span> <span class="playing">Playing</span> <strong>${escHtml(displayName)}</strong>${pos}`;
+                btnStop.disabled = false;
+            } else if (activeScene) {
+                // No FPP playlist running, but we activated a scene via overlays.
+                statusText.innerHTML = `<span class="label">Status:</span> <span class="playing">Scene Active</span> <strong>${escHtml(activeScene)}</strong>`;
+                btnStop.disabled = false;
+            } else {
+                statusText.innerHTML = `<span class="label">Status:</span> ${escHtml(mode)}`;
+                btnStop.disabled = true;
+            }
+
+            // Highlight active playlist card.
+            document.querySelectorAll('.playlist-card[data-name]').forEach(card => {
+                const isActive = (displayName && !isTempSeq && card.dataset.name === currentPlaylist)
+                              || (!displayName && activeScene && card.dataset.name === activeScene);
+                card.classList.toggle('active-playlist', isActive);
+            });
+            document.querySelectorAll('.playlist-card[data-seqname]').forEach(card => {
+                card.classList.toggle('active-playlist', card.dataset.seqname === currentPlaylist);
+            });
+        } catch {
+            statusText.innerHTML = '<span class="label">Status:</span> <span style="color:#a0a0b0">FPP unreachable</span>';
+        }
+    }
+
+    function startPolling() {
+        clearInterval(statusPollTimer);
+        pollStatus();
+        statusPollTimer = setInterval(pollStatus, 5000);
+    }
+
+    // ── Play a playlist ────────────────────────────────────────
+    async function playPlaylist(name) {
+        const btn = grid.querySelector(`.btn-play[data-name="${CSS.escape(name)}"]`);
+        if (btn) btn.disabled = true;
+        try {
+            await apiFetch(`/api/playlists/${encodeURIComponent(name)}/play`, 'POST', { repeat: loopEnabled });
+            if (name.startsWith('Scene - ')) {
+                activeScene = name;
+                showToast(`\u25A0 Scene Active: ${name}`, 'success');
+            } else {
+                activeScene = null;
+                showToast(`${loopEnabled ? '\u21BB Looping' : '\u25B6 Playing'}: ${name}`, 'success');
+            }
+            await pollStatus();
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    // ── Stop playback ──────────────────────────────────────────
+    async function stopPlayback() {
+        btnStop.disabled = true;
+        try {
+            await apiFetch('/api/playlists/stop', 'POST');
+            activeScene = null;
+            showToast('Stopped', 'success');
+            await pollStatus();
+        } catch (err) {
+            showToast(err.message, 'error');
+            btnStop.disabled = false;
+        }
+    }
+
+    // ── Event delegation for play buttons ─────────────────────
+    grid.addEventListener('click', e => {
+        const btn = e.target.closest('.btn-play');
+        if (btn) playPlaylist(btn.dataset.name);
+    });
+
+    btnStop.addEventListener('click', stopPlayback);
+
+    document.getElementById('btn-refresh').addEventListener('click', () => {
+        loadPlaylists();
+        loadSequences();
+        pollStatus();
+    });
+
+    // ── Sequences ──────────────────────────────────────────────
+    const seqGrid = document.getElementById('sequence-grid');
+
+    function renderSequences(names) {
+        const section = document.getElementById('sequence-section');
+        if (!names.length) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = '';
+        seqGrid.innerHTML = names.map(name => `
+            <div class="playlist-card" data-seqname="${escHtml(name)}">
+                <span class="playlist-name" title="${escHtml(name)}">${escHtml(name)}</span>
+                <button class="btn-play btn-seq" data-seqname="${escHtml(name)}" aria-label="Play ${escHtml(name)}">&#9654; Play</button>
+            </div>
+        `).join('');
+    }
+
+    async function loadSequences() {
+        try {
+            const data = await apiFetch('/api/sequences');
+            const seqs = data.sequences || [];
+            const prev = hasSequences;
+            hasSequences = seqs.length > 0;
+            renderSequences(seqs);
+            // If sequence availability changed, re-render playlists so
+            // Current-Sequence shows/hides accordingly.
+            if (hasSequences !== prev) loadPlaylists();
+        } catch (err) {
+            seqGrid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+        }
+    }
+
+    async function playSequence(name) {
+        const btn = seqGrid.querySelector(`.btn-seq[data-seqname="${CSS.escape(name)}"]`);
+        if (btn) btn.disabled = true;
+        try {
+            await apiFetch(`/api/sequences/${encodeURIComponent(name)}/play`, 'POST', { repeat: loopEnabled });
+            showToast(`${loopEnabled ? '\u21BB Looping' : '\u25B6 Playing'}: ${name}`, 'success');
+            await pollStatus();
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    seqGrid.addEventListener('click', e => {
+        const btn = e.target.closest('.btn-seq');
+        if (btn) playSequence(btn.dataset.seqname);
+    });
+
+    // ── Boot ───────────────────────────────────────────────────
+    loadPlaylists();
+    loadSequences();
+    startPolling();
+})();
+</script>
+{% endblock %}

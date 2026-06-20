@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Home — Lighting Control{% endblock %}
+
+{% block extra_head %}
+<style>
+    .home-hero {
+        text-align: center;
+        padding: 3rem 1rem 2.5rem;
+    }
+    .home-hero h1 {
+        font-size: clamp(1.5rem, 4vw, 2.4rem);
+        font-weight: 900;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        max-width: 780px;
+        margin: 0 auto 0.6rem;
+    }
+    .home-hero h1 em {
+        color: var(--accent);
+        font-style: normal;
+    }
+    .home-hero .tagline {
+        font-size: 0.9rem;
+        color: var(--text-dim);
+        margin-top: 0.8rem;
+    }
+
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1.25rem;
+        margin-top: 2.5rem;
+    }
+    .feature-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        padding: 1.5rem 1.4rem;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+        transition: border-color 0.18s, background 0.18s, transform 0.15s;
+    }
+    .feature-card:hover {
+        border-color: var(--accent);
+        background: var(--surface-hi);
+        transform: translateY(-2px);
+    }
+    .feature-card .icon {
+        font-size: 2rem;
+        margin-bottom: 0.85rem;
+        display: block;
+    }
+    .feature-card h2 {
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 0.55rem;
+    }
+    .feature-card p {
+        font-size: 0.83rem;
+        color: var(--text-dim);
+        line-height: 1.6;
+    }
+
+    .home-cta {
+        text-align: center;
+        margin-top: 2.75rem;
+    }
+    .btn-primary {
+        display: inline-block;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.10em;
+        text-transform: uppercase;
+        text-decoration: none;
+        padding: 0.7rem 2rem;
+        border-radius: 8px;
+        transition: opacity 0.15s, transform 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="home-hero">
+    <h1>Welcome to the <em>"{{ site_settings.get('site_name') or 'For The Culture' }}"</em><br>Lighting Control System</h1>
+    <p class="tagline">Control your lighting system from any device on the network.</p>
+</div>
+
+<div class="feature-grid">
+    <a href="{{ url_for('main.controls') }}" class="feature-card">
+        <span class="icon">🎬</span>
+        <h2>Controls</h2>
+        <p>Start any playlist or sequence with one click. Use the loop toggle for continuous playback, or stop at any time. A live status banner shows what's currently playing.</p>
+    </a>
+
+    <a href="{{ url_for('colors.colors_page') }}" class="feature-card">
+        <span class="icon">🎨</span>
+        <h2>Custom Color</h2>
+        <p>Set a solid color across all pixel zones using the interactive color picker. Save your favorite colors as named quick-access buttons for instant one-tap recall.</p>
+    </a>
+
+    <a href="{{ url_for('scheduler.schedule_page') }}" class="feature-card">
+        <span class="icon">🗓</span>
+        <h2>Schedule</h2>
+        <p>View, create, and edit scheduled events. Supports exact times as well as solar-time triggers — Dawn, Sunrise, Sunset, and Dusk — with minute offsets.</p>
+    </a>
+
+    <a href="{{ url_for('settings.settings_page') }}" class="feature-card">
+        <span class="icon">⚙️</span>
+        <h2>Settings</h2>
+        <p>Customise the look of the control panel — site name, accent color, background image, logo, and more. Changes take effect immediately without a restart.</p>
+    </a>
+</div>
+
+<div class="home-cta">
+    <a href="{{ url_for('main.controls') }}" class="btn-primary">Open Controls →</a>
+</div>
+{% endblock %}
