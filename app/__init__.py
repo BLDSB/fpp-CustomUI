@@ -104,21 +104,4 @@ def create_app():
         settings = {s.key: s.value for s in AppSetting.query.all()}
         return {"site_settings": settings}
 
-    @app.after_request
-    def set_csp(response):
-        # FPP's Apache uses 'Header set' (not 'Header always set') for its
-        # restrictive CSP, so setting our own header here prevents Apache
-        # from overwriting it. We need img-src * to allow external logo and
-        # background image URLs entered in Settings.
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "img-src * data: blob:; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "connect-src 'self'; "
-            "font-src 'self' data:; "
-            "object-src 'none';"
-        )
-        return response
-
     return app

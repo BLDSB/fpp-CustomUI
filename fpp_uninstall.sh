@@ -30,9 +30,22 @@ fi
 # ── 2. Remove Apache reverse proxy ────────────────────────────────────────────
 if [ -f "/etc/apache2/conf-enabled/99-fpp-ui.conf" ]; then
     rm -f /etc/apache2/conf-enabled/99-fpp-ui.conf
-    service apache2 restart
     echo "✓ Apache proxy config removed."
 fi
+
+# Remove the CSP override block we injected into FPP's VirtualHost
+VHOST_CONF="/etc/apache2/sites-enabled/000-default.conf"
+if [ -f "$VHOST_CONF" ] && grep -qF "# BEGIN fpp-CustomUI CSP override" "$VHOST_CONF"; then
+    python3 - "$VHOST_CONF" << 'PYEOF'
+import sys, re
+conf = open(sys.argv[1]).read()
+conf = re.sub(r'\s*# BEGIN fpp-CustomUI CSP override.*?# END fpp-CustomUI CSP override', '', conf, flags=re.DOTALL)
+open(sys.argv[1], 'w').write(conf)
+print('  ✓ FPP VirtualHost CSP patch removed.')
+PYEOF
+fi
+
+service apache2 restart
 
 echo ""
 echo "Uninstall complete. FPP will now remove the plugin directory."

@@ -98,6 +98,27 @@ echo ""
 APACHE_CONF="/etc/apache2/conf-enabled/99-fpp-ui.conf"
 cp "$PLUGIN_DIR/deploy/99-fpp-ui.conf" "$APACHE_CONF"
 a2enmod proxy proxy_http headers > /dev/null 2>&1 || true
+
+# FPP's Apache injects a restrictive Content-Security-Policy via its VirtualHost
+# config that blocks external images. Inject a <Location> block inside FPP's
+# VirtualHost (the only place that can override it) to replace the CSP with one
+# that allows external img-src. Idempotent — skipped if marker already present.
+VHOST_CONF="/etc/apache2/sites-enabled/000-default.conf"
+MARKER="# BEGIN fpp-CustomUI CSP override"
+if [ -f "$VHOST_CONF" ] && ! grep -qF "$MARKER" "$VHOST_CONF"; then
+    python3 - "$VHOST_CONF" << PYEOF
+import sys, re
+conf = open(sys.argv[1]).read()
+block = '''  $MARKER
+  <Location "/CustomUI/">
+    Header set Content-Security-Policy "default-src 'self'; img-src * data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none';"
+  </Location>
+  # END fpp-CustomUI CSP override'''
+open(sys.argv[1], 'w').write(conf.replace('</VirtualHost>', block + '\n</VirtualHost>', 1))
+print('  ✓ FPP VirtualHost patched for CSP.')
+PYEOF
+fi
+
 service apache2 restart
 echo "✓ Apache reverse proxy configured at /CustomUI."
 echo ""
