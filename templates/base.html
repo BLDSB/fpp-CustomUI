@@ -359,7 +359,7 @@
             setInterval(tick, 1000);
         })();
 
-        window.APP_ROOT = {{ request.script_name | tojson }};
+        window.APP_ROOT = {{ request.script_root | tojson }};
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>
