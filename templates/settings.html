@@ -268,6 +268,26 @@
         <button id="btn-save" class="btn-save">Save Settings</button>
     </div>
 
+    <!-- Backup & Restore -->
+    <div class="settings-card">
+        <h2>Backup &amp; Restore</h2>
+        <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
+            Download a backup of all settings, color zones, saved colors, and scenes.
+            Restore from a previous backup after a fresh install.
+        </p>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.25rem">
+            <a id="btn-backup" href="{{ (request.script_root or '') + '/api/backup' }}"
+               class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;gap:0.4rem">
+                Download Backup
+            </a>
+            <button type="button" class="btn-save" id="btn-restore"
+                    style="background:transparent;border:1px solid var(--accent);color:var(--accent)">
+                Restore from Backup…
+            </button>
+        </div>
+        <p id="restore-status" style="font-size:0.8rem;color:var(--text-dim);margin:0;display:none"></p>
+    </div>
+
     <!-- Zones -->
     <div class="settings-card">
         <h2>Color Zones</h2>
@@ -366,6 +386,38 @@
     }
     wireUpload('btn-upload-logo', 's-logo-url', 'logo-preview', 'logo');
     wireUpload('btn-upload-bg',   's-bg-url',   'bg-preview',   'bg');
+
+    // ── Backup / Restore ────────────────────────────────────────
+    document.getElementById('btn-restore').addEventListener('click', () => {
+        const picker = document.createElement('input');
+        picker.type = 'file';
+        picker.accept = '.json,application/json';
+        picker.onchange = async () => {
+            const file = picker.files[0];
+            if (!file) return;
+            const btn    = document.getElementById('btn-restore');
+            const status = document.getElementById('restore-status');
+            btn.disabled = true;
+            btn.textContent = 'Restoring…';
+            status.style.display = '';
+            status.textContent = 'Uploading backup file…';
+            try {
+                const fd = new FormData();
+                fd.append('file', file);
+                const res  = await fetch((window.APP_ROOT || '') + '/api/restore', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Restore failed');
+                status.textContent = 'Restore complete — reloading page…';
+                setTimeout(() => location.reload(), 1200);
+            } catch (err) {
+                status.textContent = '';
+                showToast('Restore failed: ' + err.message, 'error');
+                btn.disabled    = false;
+                btn.textContent = 'Restore from Backup…';
+            }
+        };
+        picker.click();
+    });
 
     // Live color preview — update CSS vars on the page as user picks
     document.getElementById('s-accent-color').addEventListener('input', e => {

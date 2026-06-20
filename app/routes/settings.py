@@ -1,12 +1,14 @@
+import datetime
 import glob
+import json
 import os
 import re
 
-from flask import Blueprint, current_app, jsonify, render_template, request, url_for
+from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from app import db
 from app.auth_utils import login_required
-from app.models import AppSetting, Zone, get_all_zones
+from app.models import AppSetting, ColorButton, SavedColor, Scene, SceneZone, Zone, get_all_zones
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -134,6 +136,121 @@ def save_zones():
         else:
             default_name = "All" if slot == 0 else f"Zone {slot}"
             db.session.add(Zone(slot=slot, display_name=name or default_name, hidden=hidden))
+
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ── Backup / Restore ──────────────────────────────────────────────────────────
+
+@settings_bp.get("/api/backup")
+@login_required
+def download_backup():
+    data = {
+        "version": 1,
+        "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "settings": {s.key: s.value for s in AppSetting.query.all()},
+        "zones": [
+            {"slot": z.slot, "display_name": z.display_name, "hidden": z.hidden}
+            for z in Zone.query.order_by(Zone.slot).all()
+        ],
+        "saved_colors": [
+            {"id": c.id, "name": c.name, "hex_value": c.hex_value}
+            for c in SavedColor.query.all()
+        ],
+        "color_buttons": [
+            {"id": b.id, "label": b.label, "saved_color_id": b.saved_color_id}
+            for b in ColorButton.query.all()
+        ],
+        "scenes": [s.to_dict() for s in Scene.query.all()],
+    }
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        json.dumps(data, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename=fpp-ui-backup-{ts}.json"},
+    )
+
+
+@settings_bp.post("/api/restore")
+@login_required
+def restore_backup():
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file provided"}), 400
+    try:
+        data = json.loads(file.read())
+    except Exception:
+        return jsonify({"error": "Invalid JSON file"}), 400
+
+    if data.get("version") != 1:
+        return jsonify({"error": "Unsupported backup version"}), 400
+
+    # Settings — merge (update existing keys, add new ones)
+    for key, value in (data.get("settings") or {}).items():
+        if key not in _ALLOWED_KEYS:
+            continue
+        s = db.session.get(AppSetting, key)
+        if s:
+            s.value = value
+        else:
+            db.session.add(AppSetting(key=key, value=value))
+
+    # Zones — update matching slots
+    existing_zones = {z.slot: z for z in Zone.query.all()}
+    for item in (data.get("zones") or []):
+        slot = item.get("slot")
+        if not isinstance(slot, int) or slot < 0 or slot > 15:
+            continue
+        name = str(item.get("display_name") or "").strip()
+        hidden = bool(item.get("hidden", False))
+        if slot in existing_zones:
+            if name:
+                existing_zones[slot].display_name = name
+            existing_zones[slot].hidden = hidden
+        else:
+            db.session.add(Zone(slot=slot, display_name=name or ("All" if slot == 0 else f"Zone {slot}"), hidden=hidden))
+
+    # Saved colors + buttons — replace entirely
+    ColorButton.query.delete()
+    SavedColor.query.delete()
+    db.session.flush()
+
+    color_id_map = {}
+    for c in (data.get("saved_colors") or []):
+        nc = SavedColor(name=str(c.get("name", ""))[:64], hex_value=str(c.get("hex_value", "#000000")))
+        db.session.add(nc)
+        db.session.flush()
+        color_id_map[c.get("id")] = nc.id
+
+    for b in (data.get("color_buttons") or []):
+        new_sid = color_id_map.get(b.get("saved_color_id"))
+        if new_sid:
+            db.session.add(ColorButton(label=str(b.get("label", ""))[:64], saved_color_id=new_sid))
+
+    # Scenes — replace entirely and regenerate FPP playlists
+    Scene.query.delete()
+    db.session.flush()
+
+    from app.routes.scenes import _write_scene_files
+    for s in (data.get("scenes") or []):
+        name = str(s.get("name", "")).strip()[:64]
+        if not name:
+            continue
+        new_scene = Scene(name=name)
+        db.session.add(new_scene)
+        db.session.flush()
+        for z in (s.get("zones") or []):
+            db.session.add(SceneZone(
+                scene_id=new_scene.id,
+                fpp_model=str(z.get("fpp_model", "")),
+                hex_color=str(z.get("hex_color", "#000000")),
+            ))
+        db.session.flush()
+        try:
+            _write_scene_files(new_scene)
+        except Exception as exc:
+            current_app.logger.warning("Could not write scene playlist for '%s': %s", name, exc)
 
     db.session.commit()
     return jsonify({"ok": True})
