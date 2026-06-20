@@ -101,7 +101,9 @@ def _deactivate_all_overlays():
                 json={"State": 0},
                 timeout=5,
             )
-            resp.raise_for_status()
+            # 404 means the model doesn't exist in FPP — already off, not an error
+            if not resp.ok and resp.status_code != 404:
+                resp.raise_for_status()
         except requests.RequestException as exc:
             current_app.logger.warning("FPP deactivate %s error: %s", model, exc)
             errors.append(model)
