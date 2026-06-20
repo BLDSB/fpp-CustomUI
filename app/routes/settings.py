@@ -183,6 +183,13 @@ def create_overlay_models():
     except Exception as exc:
         return jsonify({"error": f"Could not write config: {exc}"}), 500
 
+    # fppd must restart to pick up the new model-overlays.json
+    import subprocess
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "fppd"], timeout=15, check=True)
+    except Exception as exc:
+        current_app.logger.warning("Could not restart fppd: %s", exc)
+
     return jsonify({"ok": True})
 
 
