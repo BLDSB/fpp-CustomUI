@@ -141,6 +141,51 @@ def save_zones():
     return jsonify({"ok": True})
 
 
+# ── FPP integration ───────────────────────────────────────────────────────────
+
+@settings_bp.post("/api/fpp/create-overlay-models")
+@login_required
+def create_overlay_models():
+    config_path = "/home/fpp/media/config/model-overlays.json"
+    zone_names = {f"Zone {i}" for i in range(1, 16)}
+
+    try:
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                existing = json.load(f)
+        else:
+            existing = {"models": [], "autoCreate": True}
+    except Exception:
+        existing = {"models": [], "autoCreate": True}
+
+    # Keep any non-Zone-1-15 models; replace Zone entries with fresh stubs
+    kept = [m for m in existing.get("models", []) if m.get("Name") not in zone_names]
+    new_zones = [
+        {
+            "Name": f"Zone {i}",
+            "Type": "Channel",
+            "StartChannel": 1,
+            "ChannelCount": 3,
+            "ChannelCountPerNode": 3,
+            "StringCount": 1,
+            "StrandsPerString": 1,
+            "Orientation": "horizontal",
+            "StartCorner": "TL",
+            "xLights": False,
+        }
+        for i in range(1, 16)
+    ]
+    existing["models"] = kept + new_zones
+
+    try:
+        with open(config_path, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception as exc:
+        return jsonify({"error": f"Could not write config: {exc}"}), 500
+
+    return jsonify({"ok": True})
+
+
 # ── Backup / Restore ──────────────────────────────────────────────────────────
 
 @settings_bp.get("/api/backup")

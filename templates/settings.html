@@ -135,6 +135,32 @@
     .zone-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
     .zone-row.is-hidden input[type="text"] { opacity: 0.4; }
 
+    /* Confirm modal */
+    .modal-backdrop {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.65);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 1000;
+        opacity: 0; pointer-events: none;
+        transition: opacity 0.18s;
+    }
+    .modal-backdrop.open { opacity: 1; pointer-events: all; }
+    .modal-box {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 1.75rem 1.75rem 1.4rem;
+        max-width: 420px;
+        width: calc(100% - 2rem);
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        display: flex; flex-direction: column; gap: 1rem;
+    }
+    .modal-box h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+    .modal-box p  { font-size: 0.85rem; color: var(--text-dim); margin: 0; line-height: 1.55; }
+    .modal-box a  { color: var(--accent); }
+    .modal-actions { display: flex; gap: 0.65rem; justify-content: flex-end; flex-wrap: wrap; }
+
     /* Image upload row */
     .img-input-row { display: flex; gap: 0.4rem; align-items: stretch; }
     .img-input-row input[type="text"] { flex: 1; }
@@ -297,8 +323,12 @@
             (<em>All</em>, <em>Zone 1</em>…<em>Zone 15</em>) must match what's configured in FPP.
         </p>
         <div id="zones-list" style="display:flex;flex-direction:column;gap:0.6rem;margin-top:0.25rem"></div>
-        <div>
+        <div style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:center">
             <button id="btn-save-zones" class="btn-save">Save Zones</button>
+            <button id="btn-create-overlay-models" type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
+                Create FPP Overlay Models
+            </button>
         </div>
     </div>
 
@@ -327,6 +357,31 @@
         </div>
     </div>
 
+</div>
+
+<!-- Create Overlay Models confirmation modal -->
+<div class="modal-backdrop" id="modal-overlay-models" role="dialog" aria-modal="true">
+    <div class="modal-box">
+        <h3>Create FPP Pixel Overlay Models</h3>
+        <p>
+            This creates the pixel overlay models for the 15 zones in FPP, but
+            <strong>you must update the channel data in FPP</strong> before they
+            will work correctly.
+        </p>
+        <p>
+            After creating, open the
+            <a id="fpp-overlay-link" href="#" target="_blank" rel="noopener noreferrer">
+                FPP Pixel Overlay Models page
+            </a>
+            to set the start channel and channel count for each zone.
+        </p>
+        <div class="modal-actions">
+            <button type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)"
+                    id="btn-modal-cancel">Cancel</button>
+            <button type="button" class="btn-save" id="btn-modal-confirm">Create Models</button>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -386,6 +441,39 @@
     }
     wireUpload('btn-upload-logo', 's-logo-url', 'logo-preview', 'logo');
     wireUpload('btn-upload-bg',   's-bg-url',   'bg-preview',   'bg');
+
+    // ── Create FPP Overlay Models modal ─────────────────────────
+    const overlayModal   = document.getElementById('modal-overlay-models');
+    const fppOverlayLink = document.getElementById('fpp-overlay-link');
+
+    document.getElementById('btn-create-overlay-models').addEventListener('click', () => {
+        fppOverlayLink.href = `http://${window.location.hostname}/pixeloverlaymodels.php`;
+        overlayModal.classList.add('open');
+    });
+    document.getElementById('btn-modal-cancel').addEventListener('click', () => {
+        overlayModal.classList.remove('open');
+    });
+    overlayModal.addEventListener('click', e => {
+        if (e.target === overlayModal) overlayModal.classList.remove('open');
+    });
+
+    document.getElementById('btn-modal-confirm').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-modal-confirm');
+        btn.disabled = true;
+        btn.textContent = 'Creating…';
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/fpp/create-overlay-models', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            overlayModal.classList.remove('open');
+            showToast('Overlay models created — update channel data in FPP to activate them.', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled    = false;
+            btn.textContent = 'Create Models';
+        }
+    });
 
     // ── Backup / Restore ────────────────────────────────────────
     document.getElementById('btn-restore').addEventListener('click', () => {
