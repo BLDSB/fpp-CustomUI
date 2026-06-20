@@ -8,7 +8,7 @@
   "bugURL": "https://github.com/BLDSB/fpp-CustomUI/issues",
   "versions": [
     {
-      "minFPPVersion": "8.0",
+      "minFPPVersion": "9.0",
       "maxFPPVersion": "0",
       "branch": "main",
       "sha": "latest",
