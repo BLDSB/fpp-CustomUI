@@ -134,6 +134,24 @@
     }
     .zone-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
     .zone-row.is-hidden input[type="text"] { opacity: 0.4; }
+
+    /* Image upload row */
+    .img-input-row { display: flex; gap: 0.4rem; align-items: stretch; }
+    .img-input-row input[type="text"] { flex: 1; }
+    .btn-upload {
+        background: none;
+        border: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        border-radius: 6px;
+        padding: 0 0.7rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: color 0.15s, border-color 0.15s;
+        flex-shrink: 0;
+    }
+    .btn-upload:hover { color: var(--accent); border-color: var(--accent); }
+    .btn-upload:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>
 {% endblock %}
 
@@ -159,10 +177,13 @@
         </div>
 
         <div class="form-field">
-            <label for="s-logo-url">Logo URL</label>
-            <input type="text" id="s-logo-url"
-                   value="{{ (settings.get('logo_url') or '') | e }}"
-                   placeholder="https://example.com/logo.png">
+            <label for="s-logo-url">Logo</label>
+            <div class="img-input-row">
+                <input type="text" id="s-logo-url"
+                       value="{{ (settings.get('logo_url') or '') | e }}"
+                       placeholder="https://example.com/logo.png or upload →">
+                <button type="button" class="btn-upload" id="btn-upload-logo">Upload</button>
+            </div>
             <span class="hint">Displayed in the nav bar beside the site name. Leave blank to hide.</span>
             <img id="logo-preview" src="{{ (settings.get('logo_url') or '') | e }}"
                  alt="Logo preview" class="preview-img"
@@ -228,10 +249,13 @@
         <h2>Background</h2>
 
         <div class="form-field">
-            <label for="s-bg-url">Background Image URL</label>
-            <input type="text" id="s-bg-url"
-                   value="{{ (settings.get('bg_image_url') or '') | e }}"
-                   placeholder="https://example.com/background.jpg">
+            <label for="s-bg-url">Background Image</label>
+            <div class="img-input-row">
+                <input type="text" id="s-bg-url"
+                       value="{{ (settings.get('bg_image_url') or '') | e }}"
+                       placeholder="https://example.com/background.jpg or upload →">
+                <button type="button" class="btn-upload" id="btn-upload-bg">Upload</button>
+            </div>
             <span class="hint">Full-page background. A dark overlay is applied automatically for readability.
                 Leave blank to use the default solid dark background.</span>
             <img id="bg-preview" src="{{ (settings.get('bg_image_url') or '') | e }}"
@@ -302,6 +326,46 @@
     }
     wirePreview('s-logo-url', 'logo-preview');
     wirePreview('s-bg-url',   'bg-preview');
+
+    // ── Image upload ────────────────────────────────────────────
+    function wireUpload(btnId, inputId, previewId, type) {
+        document.getElementById(btnId).addEventListener('click', () => {
+            const picker = document.createElement('input');
+            picker.type = 'file';
+            picker.accept = 'image/*';
+            picker.onchange = async () => {
+                const file = picker.files[0];
+                if (!file) return;
+                const btn = document.getElementById(btnId);
+                btn.disabled = true;
+                btn.textContent = 'Uploading…';
+                try {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    const res = await fetch(
+                        (window.APP_ROOT || '') + '/api/upload/image?type=' + type,
+                        { method: 'POST', body: fd }
+                    );
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Upload failed');
+                    const input   = document.getElementById(inputId);
+                    const preview = document.getElementById(previewId);
+                    input.value        = data.url;
+                    preview.src        = data.url;
+                    preview.style.display = '';
+                    showToast('Image uploaded — click Save Settings to apply.', 'success');
+                } catch (err) {
+                    showToast('Upload failed: ' + err.message, 'error');
+                } finally {
+                    btn.disabled    = false;
+                    btn.textContent = 'Upload';
+                }
+            };
+            picker.click();
+        });
+    }
+    wireUpload('btn-upload-logo', 's-logo-url', 'logo-preview', 'logo');
+    wireUpload('btn-upload-bg',   's-bg-url',   'bg-preview',   'bg');
 
     // Live color preview — update CSS vars on the page as user picks
     document.getElementById('s-accent-color').addEventListener('input', e => {

@@ -1,6 +1,8 @@
+import glob
+import os
 import re
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request, url_for
 
 from app import db
 from app.auth_utils import login_required
@@ -59,6 +61,45 @@ def save_settings():
             setting.value = value
 
     db.session.commit()
+    return jsonify({"ok": True})
+
+
+_ALLOWED_IMAGE_TYPES = {"logo", "bg"}
+_ALLOWED_IMAGE_EXTS  = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+
+
+@settings_bp.post("/api/upload/image")
+@login_required
+def upload_image():
+    image_type = request.args.get("type", "")
+    if image_type not in _ALLOWED_IMAGE_TYPES:
+        return jsonify({"error": "type must be 'logo' or 'bg'"}), 400
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "No file provided"}), 400
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXTS:
+        return jsonify({"error": f"Unsupported file type. Use: {', '.join(sorted(_ALLOWED_IMAGE_EXTS))}"}), 400
+
+    upload_dir = os.path.join(current_app.static_folder, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Remove any previous upload for this slot (different extension)
+    for old in glob.glob(os.path.join(upload_dir, f"{image_type}.*")):
+        os.remove(old)
+
+    filename = f"{image_type}{ext}"
+    file.save(os.path.join(upload_dir, filename))
+
+    return jsonify({"url": url_for("static", filename=f"uploads/{filename}")})
+
+
+@settings_bp.get("/api/upload/image/<image_type>")
+@login_required
+def delete_image(image_type):
+    """DELETE isn't used — kept as a no-op placeholder; actual delete is via save_settings."""
     return jsonify({"ok": True})
 
 

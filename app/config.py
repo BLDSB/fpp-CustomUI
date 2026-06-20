@@ -15,3 +15,4 @@ class Config:
     # Secret token for the /internal/* endpoints called by FPP playlists.
     # Generate with: python -c "import secrets; print(secrets.token_hex(24))"
     INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
+    MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB upload limit
