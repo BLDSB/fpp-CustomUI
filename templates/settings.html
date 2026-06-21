@@ -336,20 +336,35 @@
     <div class="settings-card">
         <h2>Pixel Controllers</h2>
 
-        <div class="form-field">
-            <label for="s-genius-url">Genius Pro URL</label>
-            <input type="text" id="s-genius-url"
-                   value="{{ (settings.get('genius_pro_url') or '') | e }}"
-                   placeholder="http://10.27.200.77">
-            <span class="hint">Base URL of your Genius Pro controller. Used for remote reboot.</span>
+        <div class="form-field" style="flex-direction:row;align-items:center;gap:0.75rem">
+            <label for="s-genius-count" style="white-space:nowrap">Number of controllers</label>
+            <select id="s-genius-count"
+                    style="background:rgba(0,0,0,0.35);border:1px solid var(--border-dim);border-radius:6px;
+                           padding:0.45rem 0.7rem;color:var(--text);font-size:0.9rem;cursor:pointer">
+                {% for n in range(1, 9) %}
+                <option value="{{ n }}" {{ 'selected' if (settings.get('genius_pro_count') or '1')|int == n }}>{{ n }}</option>
+                {% endfor %}
+            </select>
         </div>
 
-        <div style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:center">
-            <button id="btn-save-genius-url" class="btn-save">Save URL</button>
-            <button id="btn-genius-reboot" type="button" class="btn-save"
-                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
-                Reboot Genius Pro
-            </button>
+        <div id="genius-rows" style="display:flex;flex-direction:column;gap:0.6rem">
+            {% for i in range(1, 9) %}
+            {% set url_val = settings.get('genius_pro_url_' ~ i) or (settings.get('genius_pro_url') if i == 1 else '') %}
+            <div class="genius-row" data-idx="{{ i }}"
+                 style="display:flex;gap:0.5rem;align-items:center">
+                <span style="font-size:0.82rem;color:var(--text-dim);width:80px;flex-shrink:0">Controller {{ i }}</span>
+                <input type="text" class="genius-url-input"
+                       value="{{ (url_val or '') | e }}"
+                       placeholder="http://192.168.x.x"
+                       style="flex:1;background:rgba(0,0,0,0.35);border:1px solid var(--border-dim);
+                              border-radius:6px;padding:0.45rem 0.7rem;color:var(--text);font-size:0.88rem">
+                <button type="button" class="btn-upload genius-reboot-btn" data-idx="{{ i }}">Reboot</button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div>
+            <button id="btn-save-genius-urls" class="btn-save">Save URLs</button>
         </div>
     </div>
 
@@ -481,19 +496,35 @@
     wireUpload('btn-upload-logo', 's-logo-url', 'logo-preview', 'logo');
     wireUpload('btn-upload-bg',   's-bg-url',   'bg-preview',   'bg');
 
-    // ── Genius Pro ──────────────────────────────────────────────
-    document.getElementById('btn-save-genius-url').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-save-genius-url');
+    // ── Pixel Controllers ────────────────────────────────────────
+    const countSelect  = document.getElementById('s-genius-count');
+    const geniusRows   = document.querySelectorAll('.genius-row');
+
+    function applyGeniusCount(n) {
+        geniusRows.forEach(row => {
+            row.style.display = parseInt(row.dataset.idx) <= n ? '' : 'none';
+        });
+    }
+    applyGeniusCount(parseInt(countSelect.value));
+    countSelect.addEventListener('change', () => applyGeniusCount(parseInt(countSelect.value)));
+
+    document.getElementById('btn-save-genius-urls').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-save-genius-urls');
         btn.disabled = true;
+        const payload = { genius_pro_count: countSelect.value };
+        geniusRows.forEach(row => {
+            const idx = row.dataset.idx;
+            payload[`genius_pro_url_${idx}`] = row.querySelector('.genius-url-input').value.trim();
+        });
         try {
             const res  = await fetch((window.APP_ROOT || '') + '/api/settings', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ genius_pro_url: document.getElementById('s-genius-url').value.trim() }),
+                body:    JSON.stringify(payload),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Save failed');
-            showToast('Genius Pro URL saved', 'success');
+            showToast('Controller URLs saved', 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
@@ -501,12 +532,19 @@
         }
     });
 
-    const geniusModal = document.getElementById('modal-genius-reboot');
-    document.getElementById('btn-genius-reboot').addEventListener('click', () => {
-        const url = document.getElementById('s-genius-url').value.trim();
-        if (!url) { showToast('Enter the Genius Pro URL first.', 'error'); return; }
-        document.getElementById('genius-reboot-url-display').textContent = url;
-        geniusModal.classList.add('open');
+    const geniusModal    = document.getElementById('modal-genius-reboot');
+    let   geniusRebootIdx = 1;
+
+    document.querySelectorAll('.genius-reboot-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('.genius-row');
+            const url = row.querySelector('.genius-url-input').value.trim();
+            if (!url) { showToast(`Enter the URL for Controller ${btn.dataset.idx} first.`, 'error'); return; }
+            geniusRebootIdx = parseInt(btn.dataset.idx);
+            document.getElementById('genius-reboot-url-display').textContent =
+                `Controller ${geniusRebootIdx} (${url})`;
+            geniusModal.classList.add('open');
+        });
     });
     document.getElementById('btn-genius-modal-cancel').addEventListener('click', () => {
         geniusModal.classList.remove('open');
@@ -519,11 +557,14 @@
         btn.disabled = true;
         btn.textContent = 'Rebooting…';
         try {
-            const res  = await fetch((window.APP_ROOT || '') + '/api/genius/reboot', { method: 'POST' });
+            const res  = await fetch(
+                (window.APP_ROOT || '') + `/api/genius/reboot?controller=${geniusRebootIdx}`,
+                { method: 'POST' }
+            );
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Reboot failed');
             geniusModal.classList.remove('open');
-            showToast('Genius Pro is rebooting — it will be back in ~15 seconds.', 'success');
+            showToast(`Controller ${geniusRebootIdx} is rebooting — back in ~15 seconds.`, 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
