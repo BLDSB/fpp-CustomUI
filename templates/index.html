@@ -108,6 +108,52 @@
 
     .empty-state { color: var(--text-dim); font-size: 0.88rem; padding: 1rem 0; }
 
+    /* ── Brightness card ── */
+    #brightness-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 1.75rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    #brightness-card .bright-label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--text-dim);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    #brightness-slider {
+        flex: 1;
+        min-width: 120px;
+        accent-color: var(--accent);
+        cursor: pointer;
+        height: 4px;
+    }
+    #brightness-value {
+        font-size: 0.88rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
+        min-width: 38px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+    #brightness-status {
+        font-size: 0.75rem;
+        color: var(--text-dim);
+        flex-basis: 100%;
+        display: none;
+    }
+
     /* ── Loop toggle pill ── */
     .toggle-pill {
         background: rgba(46,204,113,0.15);
@@ -132,6 +178,14 @@
 {% block content %}
 <div class="page-heading">
     <h1><em>Controls</em></h1>
+</div>
+
+<!-- Brightness card -->
+<div id="brightness-card">
+    <span class="bright-label">&#9788; Brightness</span>
+    <input type="range" id="brightness-slider" min="0" max="100" value="{{ brightness }}">
+    <span id="brightness-value">{{ brightness }}%</span>
+    <span id="brightness-status"></span>
 </div>
 
 <!-- Status banner -->
@@ -389,6 +443,38 @@
     loadPlaylists();
     loadSequences();
     startPolling();
+})();
+
+// ── Brightness slider ──────────────────────────────────────────
+(function () {
+    const slider  = document.getElementById('brightness-slider');
+    const display = document.getElementById('brightness-value');
+    const status  = document.getElementById('brightness-status');
+    let debounce  = null;
+
+    slider.addEventListener('input', () => {
+        display.textContent = slider.value + '%';
+        clearTimeout(debounce);
+        debounce = setTimeout(sendBrightness, 300);
+    });
+
+    async function sendBrightness() {
+        const value = parseInt(slider.value, 10);
+        status.style.display = '';
+        status.textContent = 'Saving…';
+        try {
+            await fetch((window.APP_ROOT || '') + '/api/brightness', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ brightness: value }),
+            }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
+            status.textContent = 'Saved';
+            setTimeout(() => { status.style.display = 'none'; }, 1500);
+        } catch (e) {
+            status.textContent = 'Error — FPP unreachable';
+            setTimeout(() => { status.style.display = 'none'; }, 3000);
+        }
+    }
 })();
 </script>
 {% endblock %}
