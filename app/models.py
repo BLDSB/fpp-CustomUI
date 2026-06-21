@@ -1,3 +1,5 @@
+import json
+
 from app import db
 
 OVERLAY_MODELS = {"All"} | {f"Zone {i}" for i in range(1, 16)}
@@ -82,6 +84,29 @@ class SceneZone(db.Model):
     def to_dict(self):
         return {"fpp_model": self.fpp_model, "hex_color": self.hex_color}
 
+
+
+class EffectPreset(db.Model):
+    __tablename__ = "effect_presets"
+
+    id          = db.Column(db.Integer, primary_key=True)
+    name        = db.Column(db.String(64), nullable=False)
+    effect_name = db.Column(db.String(128), nullable=False)
+    models_json = db.Column(db.Text, nullable=False, default="[]")
+    args_json   = db.Column(db.Text, nullable=False, default="[]")
+    multisync   = db.Column(db.Boolean, nullable=False, default=False)
+    systems_json = db.Column(db.Text, nullable=False, default="[]")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "effect_name": self.effect_name,
+            "models": json.loads(self.models_json),
+            "args": json.loads(self.args_json),
+            "multisync": self.multisync,
+            "systems": json.loads(self.systems_json),
+        }
 
 
 def get_all_zones():

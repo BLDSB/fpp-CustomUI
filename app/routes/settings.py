@@ -8,7 +8,7 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 
 from app import db
 from app.auth_utils import login_required
-from app.models import AppSetting, ColorButton, SavedColor, Scene, SceneZone, Zone, get_all_zones
+from app.models import AppSetting, ColorButton, EffectPreset, SavedColor, Scene, SceneZone, Zone, get_all_zones
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -247,6 +247,7 @@ def download_backup():
             for b in ColorButton.query.all()
         ],
         "scenes": [s.to_dict() for s in Scene.query.all()],
+        "effect_presets": [p.to_dict() for p in EffectPreset.query.order_by(EffectPreset.id).all()],
     }
     ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     return Response(
@@ -267,7 +268,7 @@ def restore_backup():
     except Exception:
         return jsonify({"error": "Invalid JSON file"}), 400
 
-    if data.get("version") != 1:
+    if data.get("version") not in (1, 2):
         return jsonify({"error": "Unsupported backup version"}), 400
 
     # Settings — merge (update existing keys, add new ones)
@@ -335,6 +336,23 @@ def restore_backup():
             _write_scene_files(new_scene)
         except Exception as exc:
             current_app.logger.warning("Could not write scene playlist for '%s': %s", name, exc)
+
+    # Effect presets — replace entirely
+    EffectPreset.query.delete()
+    db.session.flush()
+    for p in (data.get("effect_presets") or []):
+        name = str(p.get("name") or "").strip()[:64]
+        effect_name = str(p.get("effect_name") or "").strip()[:128]
+        if not name or not effect_name:
+            continue
+        db.session.add(EffectPreset(
+            name=name,
+            effect_name=effect_name,
+            models_json=json.dumps(p.get("models") or []),
+            args_json=json.dumps(p.get("args") or []),
+            multisync=bool(p.get("multisync", False)),
+            systems_json=json.dumps(p.get("systems") or []),
+        ))
 
     db.session.commit()
     return jsonify({"ok": True})

@@ -94,6 +94,9 @@ def create_app():
     from app.routes.scenes import scenes_bp
     app.register_blueprint(scenes_bp)
 
+    from app.routes.effects import effects_bp
+    app.register_blueprint(effects_bp)
+
     # Allow the app to run behind a reverse proxy at a sub-path (e.g. /CustomUI).
     # Apache sets X-Forwarded-Prefix so url_for() generates correct links.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_prefix=1)

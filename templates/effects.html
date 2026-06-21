@@ -1,0 +1,807 @@
+{% extends "base.html" %}
+{% block title %}Effects{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* ── Layout ─────────────────────────────────────────────────── */
+    .effects-layout {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 1.25rem;
+        align-items: start;
+    }
+    @media (max-width: 700px) {
+        .effects-layout { grid-template-columns: 1fr; }
+    }
+
+    .effects-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 1.25rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+    }
+    .effects-card h2 {
+        font-size: 0.7rem;
+        color: var(--text-dim);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding-bottom: 0.6rem;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid var(--border-dim);
+    }
+
+    /* ── Zone selector ──────────────────────────────────────────── */
+    .zone-checks {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        max-height: 320px;
+        overflow-y: auto;
+        scrollbar-width: thin;
+    }
+    .zone-check-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        padding: 0.2rem 0.3rem;
+        border-radius: 4px;
+        transition: background 0.1s;
+    }
+    .zone-check-label:hover { background: rgba(255,255,255,0.05); }
+    .zone-check-label input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+    .zone-check-label.select-all { border-bottom: 1px solid var(--border-dim); padding-bottom: 0.45rem; margin-bottom: 0.2rem; font-weight: 600; color: var(--text-dim); font-size: 0.78rem; }
+
+    /* ── Multisync ──────────────────────────────────────────────── */
+    .multisync-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        font-size: 0.82rem;
+        color: var(--text-dim);
+        cursor: pointer;
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--border-dim);
+    }
+    .multisync-toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+    #multisync-systems { margin-top: 0.5rem; display: none; flex-direction: column; gap: 0.3rem; }
+    #multisync-systems.open { display: flex; }
+    .system-check-label {
+        display: flex; align-items: center; gap: 0.5rem;
+        font-size: 0.78rem; cursor: pointer;
+        padding: 0.15rem 0.3rem; border-radius: 4px;
+    }
+    .system-check-label:hover { background: rgba(255,255,255,0.05); }
+    .system-check-label input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+
+    /* ── Effect browser ─────────────────────────────────────────── */
+    .effect-search {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(0,0,0,0.3);
+        border: 1px solid var(--border-dim);
+        border-radius: 7px;
+        padding: 0.45rem 0.8rem;
+        margin-bottom: 1rem;
+    }
+    .effect-search input {
+        background: none;
+        border: none;
+        outline: none;
+        color: var(--text);
+        font-size: 0.9rem;
+        flex: 1;
+        min-width: 0;
+    }
+    .effect-search input::placeholder { color: var(--text-dim); }
+    .effect-search .search-icon { color: var(--text-dim); font-size: 0.85rem; flex-shrink: 0; }
+
+    .effect-section { margin-bottom: 1.1rem; }
+    .effect-section-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.72rem;
+        color: var(--text-dim);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+        padding: 0.3rem 0;
+        user-select: none;
+    }
+    .effect-section-header .count {
+        background: rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: 0.05rem 0.45rem;
+        font-size: 0.68rem;
+    }
+    .effect-section-header .chevron { margin-left: auto; transition: transform 0.18s; }
+    .effect-section-header.collapsed .chevron { transform: rotate(-90deg); }
+    .effect-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        padding-top: 0.5rem;
+    }
+    .effect-grid.hidden { display: none; }
+    .effect-btn {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        border-radius: 5px;
+        padding: 0.3rem 0.65rem;
+        font-size: 0.78rem;
+        cursor: pointer;
+        transition: color 0.12s, border-color 0.12s, background 0.12s;
+        white-space: nowrap;
+    }
+    .effect-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.25); }
+    .effect-btn.active {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: rgba(var(--accent-rgb, 233,69,96), 0.12);
+    }
+    #effect-no-results {
+        font-size: 0.85rem;
+        color: var(--text-dim);
+        padding: 0.5rem 0;
+        display: none;
+    }
+
+    /* ── Parameter panel ────────────────────────────────────────── */
+    #effect-params-card { display: none; }
+    #effect-params-card.open { display: block; }
+    .params-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    .params-header h2 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text); text-transform: none; letter-spacing: 0; border: none; padding: 0; }
+    .params-header .effect-category-tag {
+        font-size: 0.68rem;
+        color: var(--text-dim);
+        background: rgba(255,255,255,0.07);
+        border-radius: 8px;
+        padding: 0.15rem 0.5rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+    }
+    .btn-stop {
+        margin-left: auto;
+        background: none;
+        border: 1px solid #c0392b;
+        color: #c0392b;
+        border-radius: 7px;
+        padding: 0.4rem 1rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+    }
+    .btn-stop:hover { background: #c0392b; color: #fff; }
+
+    .arg-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 0.9rem 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    .arg-field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .arg-label { font-size: 0.78rem; color: var(--text-dim); }
+
+    .arg-range-wrap { display: flex; align-items: center; gap: 0.5rem; }
+    .arg-range-wrap input[type="range"] {
+        flex: 1;
+        accent-color: var(--accent);
+        cursor: pointer;
+    }
+    .arg-range-val {
+        font-size: 0.8rem;
+        color: var(--text);
+        min-width: 28px;
+        text-align: right;
+    }
+    .arg-field input[type="text"],
+    .arg-field input[type="number"],
+    .arg-field select {
+        background: rgba(0,0,0,0.35);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.4rem 0.65rem;
+        color: var(--text);
+        font-size: 0.88rem;
+        transition: border-color 0.15s;
+    }
+    .arg-field input:focus, .arg-field select:focus { outline: none; border-color: var(--accent); }
+    .arg-field select option { background: #1a1a2e; }
+    .arg-color-wrap { display: flex; align-items: center; gap: 0.5rem; }
+    .arg-color-wrap input[type="color"] {
+        width: 44px; height: 36px;
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 2px;
+        background: none;
+        cursor: pointer;
+    }
+    .arg-color-hex {
+        font-size: 0.82rem;
+        color: var(--text-dim);
+        font-family: monospace;
+    }
+    .arg-bool-wrap { display: flex; align-items: center; gap: 0.5rem; }
+    .arg-bool-wrap input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+    .arg-bool-wrap span { font-size: 0.85rem; color: var(--text-dim); }
+
+    .params-actions {
+        display: flex;
+        gap: 0.65rem;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+    .btn-run {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 7px;
+        padding: 0.55rem 1.5rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+    }
+    .btn-run:hover { opacity: 0.85; }
+    .btn-run:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-save-preset {
+        background: none;
+        border: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        border-radius: 7px;
+        padding: 0.55rem 1.1rem;
+        font-size: 0.88rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-save-preset:hover { color: var(--accent); border-color: var(--accent); }
+
+    /* ── Presets ─────────────────────────────────────────────────── */
+    .preset-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .preset-chip {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border-dim);
+        border-radius: 20px;
+        overflow: hidden;
+        font-size: 0.82rem;
+        transition: border-color 0.15s;
+    }
+    .preset-chip:hover { border-color: var(--accent); }
+    .preset-apply {
+        padding: 0.3rem 0.8rem 0.3rem 0.9rem;
+        cursor: pointer;
+        color: var(--text);
+        background: none;
+        border: none;
+        font-size: 0.82rem;
+        transition: color 0.12s;
+    }
+    .preset-apply:hover { color: var(--accent); }
+    .preset-delete {
+        padding: 0.3rem 0.6rem 0.3rem 0.2rem;
+        cursor: pointer;
+        color: var(--text-dim);
+        background: none;
+        border: none;
+        font-size: 0.75rem;
+        transition: color 0.12s;
+        line-height: 1;
+    }
+    .preset-delete:hover { color: #c0392b; }
+    #presets-empty { font-size: 0.82rem; color: var(--text-dim); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-heading-row" style="margin-bottom:1.5rem">
+    <div class="page-heading">
+        <h1><em>Effects</em></h1>
+        <p class="sub">WLED &amp; Overlay Effects</p>
+    </div>
+</div>
+
+<!-- Top: two-column layout -->
+<div class="effects-layout" style="margin-bottom:1.25rem">
+
+    <!-- Left: Zone selector + Multisync -->
+    <div class="effects-card" style="position:sticky;top:1rem">
+        <h2>Zones</h2>
+        <div class="zone-checks">
+            <label class="zone-check-label select-all">
+                <input type="checkbox" id="chk-all-zones"> Select All
+            </label>
+            {% for zone in zones %}
+            <label class="zone-check-label">
+                <input type="checkbox" class="zone-chk" value="{{ zone.fpp_model_name }}">
+                {{ zone.display_name }}
+            </label>
+            {% endfor %}
+        </div>
+
+        <label class="multisync-toggle">
+            <input type="checkbox" id="chk-multisync"> Multisync
+        </label>
+        <div id="multisync-systems"></div>
+    </div>
+
+    <!-- Right: Effect browser -->
+    <div class="effects-card">
+        <h2>Effects</h2>
+        <div class="effect-search">
+            <span class="search-icon">&#128269;</span>
+            <input type="text" id="effect-search" placeholder="Search effects…" autocomplete="off">
+        </div>
+
+        <div id="effect-no-results">No effects match your search.</div>
+
+        <div class="effect-section" id="section-builtin">
+            <div class="effect-section-header" data-target="grid-builtin">
+                Built-in <span class="count" id="count-builtin">0</span>
+                <span class="chevron">&#9660;</span>
+            </div>
+            <div class="effect-grid" id="grid-builtin"></div>
+        </div>
+
+        <div class="effect-section" id="section-wled">
+            <div class="effect-section-header" data-target="grid-wled">
+                WLED <span class="count" id="count-wled">0</span>
+                <span class="chevron">&#9660;</span>
+            </div>
+            <div class="effect-grid" id="grid-wled"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Effect parameter panel (hidden until effect selected) -->
+<div class="effects-card" id="effect-params-card" style="margin-bottom:1.25rem">
+    <div class="params-header">
+        <h2 id="params-effect-name"></h2>
+        <span class="effect-category-tag" id="params-category"></span>
+        <button class="btn-stop" id="btn-stop-effect">Stop Effects</button>
+    </div>
+    <div class="arg-grid" id="effect-args-form"></div>
+    <div class="params-actions">
+        <button class="btn-save-preset" id="btn-save-preset">Save as Preset…</button>
+        <button class="btn-run" id="btn-run-effect">&#9654; Run Effect</button>
+    </div>
+</div>
+
+<!-- Saved presets -->
+<div class="effects-card">
+    <h2>Saved Presets</h2>
+    <div class="preset-list" id="preset-list">
+        <span id="presets-empty" style="display:none">No presets saved yet.</span>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    'use strict';
+
+    const R = window.APP_ROOT || '';
+
+    // ── State ───────────────────────────────────────────────────
+    let allEffects  = { builtin: [], wled: [] };
+    let fontOptions = [];
+    let currentEffect = null;   // full name string
+    let currentArgDefs = [];    // from FPP API
+
+    // ── Helpers ─────────────────────────────────────────────────
+    async function apiFetch(url, method = 'GET', body = null) {
+        const opts = { method, headers: { 'X-Requested-With': 'XMLHttpRequest' } };
+        if (body !== null) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch(R + url, opts);
+        if (!resp.ok) {
+            const e = await resp.json().catch(() => ({}));
+            throw new Error(e.error || `HTTP ${resp.status}`);
+        }
+        return resp.json();
+    }
+
+    function escHtml(s) {
+        return String(s).replace(/[&<>"']/g, c =>
+            ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
+    // ── Zones ───────────────────────────────────────────────────
+    const chkAll   = document.getElementById('chk-all-zones');
+    const zoneChks = () => [...document.querySelectorAll('.zone-chk')];
+
+    chkAll.addEventListener('change', () => {
+        zoneChks().forEach(c => c.checked = chkAll.checked);
+    });
+    document.querySelectorAll('.zone-chk').forEach(c => {
+        c.addEventListener('change', syncAllZonesCheckbox);
+    });
+    function syncAllZonesCheckbox() {
+        const all  = zoneChks();
+        const numChecked = all.filter(c => c.checked).length;
+        chkAll.checked       = numChecked === all.length;
+        chkAll.indeterminate = numChecked > 0 && numChecked < all.length;
+    }
+    function getSelectedModels() {
+        return zoneChks().filter(c => c.checked).map(c => c.value);
+    }
+    function setSelectedModels(models) {
+        zoneChks().forEach(c => { c.checked = models.includes(c.value); });
+        syncAllZonesCheckbox();
+    }
+
+    // ── Multisync ───────────────────────────────────────────────
+    const chkMultisync   = document.getElementById('chk-multisync');
+    const systemsDiv     = document.getElementById('multisync-systems');
+
+    apiFetch('/api/effects/systems').then(systems => {
+        if (!systems.length) return;
+        systems.forEach(s => {
+            const label = document.createElement('label');
+            label.className = 'system-check-label';
+            label.innerHTML = `<input type="checkbox" class="system-chk" value="${escHtml(s.address)}">
+                <span>${escHtml(s.hostname)} <span style="color:var(--text-dim);font-size:0.72rem">${escHtml(s.address)}</span></span>`;
+            systemsDiv.appendChild(label);
+        });
+    }).catch(() => {});
+
+    chkMultisync.addEventListener('change', () => {
+        systemsDiv.classList.toggle('open', chkMultisync.checked);
+    });
+
+    function getSelectedSystems() {
+        return [...document.querySelectorAll('.system-chk:checked')].map(c => c.value);
+    }
+
+    // ── Effect browser ──────────────────────────────────────────
+    function buildGrid(containerId, effects, isWled) {
+        const grid = document.getElementById(containerId);
+        grid.innerHTML = '';
+        effects.forEach(fullName => {
+            const label = isWled ? fullName.replace(/^WLED - /, '') : fullName;
+            const btn = document.createElement('button');
+            btn.className = 'effect-btn';
+            btn.textContent = label;
+            btn.title = fullName;
+            btn.dataset.effect = fullName;
+            btn.addEventListener('click', () => selectEffect(fullName));
+            grid.appendChild(btn);
+        });
+    }
+
+    apiFetch('/api/effects/list').then(data => {
+        allEffects = data;
+        document.getElementById('count-builtin').textContent = data.builtin.length;
+        document.getElementById('count-wled').textContent    = data.wled.length;
+        buildGrid('grid-builtin', data.builtin, false);
+        buildGrid('grid-wled',    data.wled,    true);
+    }).catch(err => showToast('Could not load effects: ' + err.message, 'error'));
+
+    // Collapsible sections
+    document.querySelectorAll('.effect-section-header').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            const grid = document.getElementById(hdr.dataset.target);
+            const collapsed = hdr.classList.toggle('collapsed');
+            grid.classList.toggle('hidden', collapsed);
+        });
+    });
+
+    // Search / filter
+    document.getElementById('effect-search').addEventListener('input', function () {
+        const q = this.value.trim().toLowerCase();
+        let totalVisible = 0;
+
+        ['builtin','wled'].forEach(cat => {
+            const grid = document.getElementById('grid-' + cat);
+            const isWled = cat === 'wled';
+            let catVisible = 0;
+            grid.querySelectorAll('.effect-btn').forEach(btn => {
+                const match = !q || btn.dataset.effect.toLowerCase().includes(q);
+                btn.style.display = match ? '' : 'none';
+                if (match) catVisible++;
+            });
+            document.getElementById('count-' + cat).textContent = catVisible;
+            // Expand section if search is active and has results
+            if (q && catVisible > 0) {
+                document.querySelector(`[data-target="grid-${cat}"]`).classList.remove('collapsed');
+                grid.classList.remove('hidden');
+            }
+            totalVisible += catVisible;
+        });
+
+        document.getElementById('effect-no-results').style.display =
+            totalVisible === 0 && q ? '' : 'none';
+    });
+
+    // ── Fonts (fetched once, used by Text effect) ────────────────
+    apiFetch('/api/effects/fonts').then(fonts => {
+        fontOptions = Array.isArray(fonts) ? fonts : [];
+    }).catch(() => {});
+
+    // ── Arg rendering ────────────────────────────────────────────
+    function renderArgs(argDefs, savedValues = []) {
+        const form = document.getElementById('effect-args-form');
+        form.innerHTML = '';
+        currentArgDefs = argDefs;
+
+        argDefs.forEach((arg, idx) => {
+            const savedVal = savedValues[idx] ?? arg.default ?? '';
+            const field = document.createElement('div');
+            field.className = 'arg-field';
+            field.innerHTML = `<span class="arg-label">${escHtml(arg.description)}</span>`;
+
+            let input;
+            if (arg.type === 'range') {
+                input = makeRangeInput(arg, savedVal);
+            } else if (arg.type === 'color') {
+                input = makeColorInput(arg, savedVal);
+            } else if (arg.type === 'bool') {
+                input = makeBoolInput(arg, savedVal);
+            } else if (arg.type === 'int') {
+                input = makeIntInput(arg, savedVal);
+            } else if (arg.type === 'string' && arg.contents) {
+                input = makeSelectInput(arg, savedVal, arg.contents);
+            } else if (arg.type === 'string' && arg.contentListUrl) {
+                input = makeSelectInput(arg, savedVal, fontOptions);
+            } else {
+                input = makeTextInput(arg, savedVal);
+            }
+
+            input.dataset.argIdx = idx;
+            input.classList.add('arg-input');
+            field.appendChild(input);
+            form.appendChild(field);
+        });
+    }
+
+    function makeRangeInput(arg, val) {
+        const wrap = document.createElement('div');
+        wrap.className = 'arg-range-wrap';
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min  = arg.min ?? 0;
+        range.max  = arg.max ?? 255;
+        range.value = val !== '' ? val : (arg.default ?? 128);
+        range.classList.add('arg-input');
+        range.dataset.argIdx = -1; // set by parent
+        const disp = document.createElement('span');
+        disp.className = 'arg-range-val';
+        disp.textContent = range.value;
+        range.addEventListener('input', () => { disp.textContent = range.value; });
+        wrap.appendChild(range);
+        wrap.appendChild(disp);
+        // Return the range input as the .arg-input, but wrap it for display
+        wrap._argInput = range;
+        return wrap;
+    }
+
+    function makeColorInput(arg, val) {
+        const wrap = document.createElement('div');
+        wrap.className = 'arg-color-wrap';
+        const picker = document.createElement('input');
+        picker.type = 'color';
+        picker.value = normalizeColor(val || arg.default || '#ff0000');
+        picker.classList.add('arg-input');
+        const hex = document.createElement('span');
+        hex.className = 'arg-color-hex';
+        hex.textContent = picker.value.toUpperCase();
+        picker.addEventListener('input', () => { hex.textContent = picker.value.toUpperCase(); });
+        wrap.appendChild(picker);
+        wrap.appendChild(hex);
+        wrap._argInput = picker;
+        return wrap;
+    }
+
+    function makeBoolInput(arg, val) {
+        const wrap = document.createElement('div');
+        wrap.className = 'arg-bool-wrap';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        const strVal = String(val).toLowerCase();
+        chk.checked = strVal === 'true' || strVal === '1';
+        chk.classList.add('arg-input');
+        const lbl = document.createElement('span');
+        lbl.textContent = 'Enabled';
+        wrap.appendChild(chk);
+        wrap.appendChild(lbl);
+        wrap._argInput = chk;
+        return wrap;
+    }
+
+    function makeIntInput(arg, val) {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        if (arg.min != null) inp.min = arg.min;
+        if (arg.max != null) inp.max = arg.max;
+        inp.value = val !== '' ? val : (arg.default ?? 0);
+        return inp;
+    }
+
+    function makeSelectInput(arg, val, options) {
+        const sel = document.createElement('select');
+        options.forEach(opt => {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt;
+            if (opt === val) o.selected = true;
+            sel.appendChild(o);
+        });
+        if (!sel.value && arg.default) sel.value = arg.default;
+        return sel;
+    }
+
+    function makeTextInput(arg, val) {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = val !== '' ? val : (arg.default ?? '');
+        return inp;
+    }
+
+    function normalizeColor(val) {
+        if (!val) return '#ff0000';
+        val = val.trim();
+        return val.startsWith('#') ? val : '#' + val;
+    }
+
+    function collectArgs() {
+        return [...document.querySelectorAll('#effect-args-form .arg-field')].map(field => {
+            // For wrapped inputs (range, color, bool), the actual input is in _argInput
+            const wrap = field.querySelector('.arg-range-wrap, .arg-color-wrap, .arg-bool-wrap');
+            const inp  = wrap ? wrap._argInput : field.querySelector('.arg-input');
+            if (!inp) return '';
+            if (inp.type === 'checkbox') return inp.checked ? 'true' : 'false';
+            return inp.value;
+        });
+    }
+
+    // ── Select effect ────────────────────────────────────────────
+    async function selectEffect(effectName, savedArgs = []) {
+        // Highlight active button
+        document.querySelectorAll('.effect-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.effect === effectName);
+        });
+
+        currentEffect = effectName;
+        document.getElementById('params-effect-name').textContent = effectName;
+        document.getElementById('params-category').textContent =
+            effectName.startsWith('WLED - ') ? 'WLED' : 'Built-in';
+
+        try {
+            const data = await apiFetch('/api/effects/args/' + encodeURIComponent(effectName));
+            renderArgs(data.args || [], savedArgs);
+            document.getElementById('effect-params-card').classList.add('open');
+            document.getElementById('effect-params-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (err) {
+            showToast('Could not load effect parameters: ' + err.message, 'error');
+        }
+    }
+
+    // ── Run / Stop ───────────────────────────────────────────────
+    document.getElementById('btn-run-effect').addEventListener('click', async () => {
+        const models = getSelectedModels();
+        if (!models.length) { showToast('Select at least one zone first.', 'error'); return; }
+        if (!currentEffect)  { showToast('Select an effect first.', 'error'); return; }
+
+        const btn = document.getElementById('btn-run-effect');
+        btn.disabled = true;
+        try {
+            await apiFetch('/api/effects/run', 'POST', {
+                effect:    currentEffect,
+                models,
+                args:      collectArgs(),
+                multisync: chkMultisync.checked,
+                systems:   getSelectedSystems(),
+            });
+            showToast(`Running: ${currentEffect}`, 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btn-stop-effect').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-stop-effect');
+        btn.disabled = true;
+        try {
+            await apiFetch('/api/effects/stop', 'POST', {
+                models:    getSelectedModels(),
+                multisync: chkMultisync.checked,
+                systems:   getSelectedSystems(),
+            });
+            showToast('Effects stopped', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    // ── Presets ──────────────────────────────────────────────────
+    function renderPresets(presets) {
+        const list  = document.getElementById('preset-list');
+        const empty = document.getElementById('presets-empty');
+        // Remove existing chips (keep the empty span)
+        list.querySelectorAll('.preset-chip').forEach(el => el.remove());
+        empty.style.display = presets.length ? 'none' : '';
+        presets.forEach(p => {
+            const chip = document.createElement('div');
+            chip.className = 'preset-chip';
+            chip.innerHTML = `
+                <button class="preset-apply" title="Apply preset">&#9654; ${escHtml(p.name)}</button>
+                <button class="preset-delete" title="Delete preset">&#10005;</button>
+            `;
+            chip.querySelector('.preset-apply').addEventListener('click', () => applyPreset(p));
+            chip.querySelector('.preset-delete').addEventListener('click', async () => {
+                try {
+                    await apiFetch(`/api/effects/presets/${p.id}`, 'DELETE');
+                    chip.remove();
+                    if (!document.querySelectorAll('.preset-chip').length) empty.style.display = '';
+                } catch (err) { showToast('Error: ' + err.message, 'error'); }
+            });
+            list.appendChild(chip);
+        });
+    }
+
+    async function applyPreset(preset) {
+        setSelectedModels(preset.models);
+        if (preset.multisync) {
+            chkMultisync.checked = true;
+            systemsDiv.classList.add('open');
+            document.querySelectorAll('.system-chk').forEach(c => {
+                c.checked = preset.systems.includes(c.value);
+            });
+        }
+        await selectEffect(preset.effect_name, preset.args);
+    }
+
+    apiFetch('/api/effects/presets').then(renderPresets).catch(() => {});
+
+    document.getElementById('btn-save-preset').addEventListener('click', async () => {
+        if (!currentEffect) { showToast('Select an effect first.', 'error'); return; }
+        const name = prompt('Name this preset:');
+        if (!name || !name.trim()) return;
+        try {
+            const preset = await apiFetch('/api/effects/presets', 'POST', {
+                name:        name.trim(),
+                effect_name: currentEffect,
+                models:      getSelectedModels(),
+                args:        collectArgs(),
+                multisync:   chkMultisync.checked,
+                systems:     getSelectedSystems(),
+            });
+            renderPresets([...(document.querySelectorAll('.preset-chip').length
+                ? [] : []), preset]);
+            // Re-fetch full list to be safe
+            apiFetch('/api/effects/presets').then(renderPresets);
+            showToast(`Preset "${name.trim()}" saved`, 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    });
+
+})();
+</script>
+{% endblock %}
