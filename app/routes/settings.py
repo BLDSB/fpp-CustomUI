@@ -12,7 +12,7 @@ from app.models import AppSetting, ColorButton, SavedColor, Scene, SceneZone, Zo
 
 settings_bp = Blueprint("settings", __name__)
 
-_ALLOWED_KEYS = {"bg_image_url", "logo_url", "site_name", "accent_color", "nav_color", "nav_link_color", "text_color"}
+_ALLOWED_KEYS = {"bg_image_url", "logo_url", "site_name", "accent_color", "nav_color", "nav_link_color", "text_color", "genius_pro_url"}
 _URL_RE    = re.compile(r"^https?://", re.IGNORECASE)
 _COLOR_RE  = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -190,6 +190,24 @@ def create_overlay_models():
     except Exception as exc:
         current_app.logger.warning("Could not restart fppd: %s", exc)
 
+    return jsonify({"ok": True})
+
+
+@settings_bp.post("/api/genius/reboot")
+@login_required
+def genius_reboot():
+    import requests as req
+    setting = db.session.get(AppSetting, "genius_pro_url")
+    base_url = (setting.value or "").rstrip("/") if setting else ""
+    if not base_url:
+        return jsonify({"error": "Genius Pro URL is not configured in Settings"}), 400
+    try:
+        resp = req.get(f"{base_url}/api/reboot", timeout=8)
+        data = resp.json()
+        if not data.get("success"):
+            return jsonify({"error": "Reboot command not acknowledged"}), 502
+    except Exception as exc:
+        return jsonify({"error": f"Could not reach Genius Pro: {exc}"}), 502
     return jsonify({"ok": True})
 
 

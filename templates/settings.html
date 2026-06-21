@@ -332,6 +332,27 @@
         </div>
     </div>
 
+    <!-- Pixel Controllers -->
+    <div class="settings-card">
+        <h2>Pixel Controllers</h2>
+
+        <div class="form-field">
+            <label for="s-genius-url">Genius Pro URL</label>
+            <input type="text" id="s-genius-url"
+                   value="{{ (settings.get('genius_pro_url') or '') | e }}"
+                   placeholder="http://10.27.200.77">
+            <span class="hint">Base URL of your Genius Pro controller. Used for remote reboot.</span>
+        </div>
+
+        <div style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:center">
+            <button id="btn-save-genius-url" class="btn-save">Save URL</button>
+            <button id="btn-genius-reboot" type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
+                Reboot Genius Pro
+            </button>
+        </div>
+    </div>
+
     <!-- Security -->
     <div class="settings-card">
         <h2>Security</h2>
@@ -357,6 +378,24 @@
         </div>
     </div>
 
+</div>
+
+<!-- Genius Pro reboot confirmation modal -->
+<div class="modal-backdrop" id="modal-genius-reboot" role="dialog" aria-modal="true">
+    <div class="modal-box">
+        <h3>Reboot Genius Pro?</h3>
+        <p>
+            This will immediately reboot the Genius Pro controller at
+            <strong id="genius-reboot-url-display"></strong>.
+            It will be offline for about 15 seconds.
+        </p>
+        <div class="modal-actions">
+            <button type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)"
+                    id="btn-genius-modal-cancel">Cancel</button>
+            <button type="button" class="btn-save" id="btn-genius-modal-confirm">Reboot</button>
+        </div>
+    </div>
 </div>
 
 <!-- Create Overlay Models confirmation modal -->
@@ -441,6 +480,57 @@
     }
     wireUpload('btn-upload-logo', 's-logo-url', 'logo-preview', 'logo');
     wireUpload('btn-upload-bg',   's-bg-url',   'bg-preview',   'bg');
+
+    // ── Genius Pro ──────────────────────────────────────────────
+    document.getElementById('btn-save-genius-url').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-save-genius-url');
+        btn.disabled = true;
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/settings', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ genius_pro_url: document.getElementById('s-genius-url').value.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+            showToast('Genius Pro URL saved', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    const geniusModal = document.getElementById('modal-genius-reboot');
+    document.getElementById('btn-genius-reboot').addEventListener('click', () => {
+        const url = document.getElementById('s-genius-url').value.trim();
+        if (!url) { showToast('Enter the Genius Pro URL first.', 'error'); return; }
+        document.getElementById('genius-reboot-url-display').textContent = url;
+        geniusModal.classList.add('open');
+    });
+    document.getElementById('btn-genius-modal-cancel').addEventListener('click', () => {
+        geniusModal.classList.remove('open');
+    });
+    geniusModal.addEventListener('click', e => {
+        if (e.target === geniusModal) geniusModal.classList.remove('open');
+    });
+    document.getElementById('btn-genius-modal-confirm').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-genius-modal-confirm');
+        btn.disabled = true;
+        btn.textContent = 'Rebooting…';
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/genius/reboot', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Reboot failed');
+            geniusModal.classList.remove('open');
+            showToast('Genius Pro is rebooting — it will be back in ~15 seconds.', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled    = false;
+            btn.textContent = 'Reboot';
+        }
+    });
 
     // ── Create FPP Overlay Models modal ─────────────────────────
     const overlayModal   = document.getElementById('modal-overlay-models');
