@@ -110,6 +110,11 @@ def create_app():
     from app.routes.effects import effects_bp
     app.register_blueprint(effects_bp)
 
+    # Start the background alert monitor (daemon thread — zero cost when idle).
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        from app.alert_monitor import start_monitor
+        start_monitor(app)
+
     @app.before_request
     def _require_provisioning():
         """Funnel a fresh install to the first-run setup page.
