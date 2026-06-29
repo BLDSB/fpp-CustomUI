@@ -373,23 +373,26 @@
         <h2>Security</h2>
 
         <div class="form-field">
-            <label for="s-cur-pw">Current Password</label>
-            <input type="password" id="s-cur-pw" autocomplete="current-password">
+            <label for="s-cur-pw">Current PIN</label>
+            <input type="password" id="s-cur-pw" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="current-password" placeholder="••••">
         </div>
 
         <div class="form-field">
-            <label for="s-new-pw">New Password</label>
-            <input type="password" id="s-new-pw" autocomplete="new-password">
-            <span class="hint">Minimum 8 characters.</span>
+            <label for="s-new-pw">New PIN</label>
+            <input type="password" id="s-new-pw" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="new-password" placeholder="••••">
+            <span class="hint">Exactly 4 digits (0–9).</span>
         </div>
 
         <div class="form-field">
-            <label for="s-confirm-pw">Confirm New Password</label>
-            <input type="password" id="s-confirm-pw" autocomplete="new-password">
+            <label for="s-confirm-pw">Confirm New PIN</label>
+            <input type="password" id="s-confirm-pw" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="new-password" placeholder="••••">
         </div>
 
         <div>
-            <button id="btn-change-pw" class="btn-save">Change Password</button>
+            <button id="btn-change-pw" class="btn-save">Change PIN</button>
         </div>
     </div>
 
@@ -726,28 +729,28 @@
         const confirm = document.getElementById('s-confirm-pw').value;
 
         if (!curPw || !newPw || !confirm) {
-            showToast('Please fill in all password fields.', 'error');
+            showToast('Please fill in all PIN fields.', 'error');
             return;
         }
         if (newPw !== confirm) {
-            showToast('New passwords do not match.', 'error');
+            showToast('New PINs do not match.', 'error');
             return;
         }
-        if (newPw.length < 8) {
-            showToast('New password must be at least 8 characters.', 'error');
+        if (!/^\d{4}$/.test(newPw)) {
+            showToast('New PIN must be exactly 4 digits.', 'error');
             return;
         }
 
         btn.disabled = true;
         try {
-            const res = await fetch((window.APP_ROOT||'') + '/api/change-password', {
+            const res = await fetch((window.APP_ROOT||'') + '/api/change-pin', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ current_password: curPw, new_password: newPw }),
+                body:    JSON.stringify({ current_pin: curPw, new_pin: newPw }),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Failed to change password.');
-            showToast('Password changed successfully.', 'success');
+            if (!res.ok) throw new Error(data.error || 'Failed to change PIN.');
+            showToast('PIN changed successfully.', 'success');
             document.getElementById('s-cur-pw').value    = '';
             document.getElementById('s-new-pw').value    = '';
             document.getElementById('s-confirm-pw').value = '';
