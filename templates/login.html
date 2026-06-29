@@ -25,22 +25,19 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
-        /* ── Background image (mirrors base.html) ── */
         .bg-layer {
-            position: fixed;
-            inset: 0;
-            z-index: 0;
+            position: fixed; inset: 0; z-index: 0;
             background-image: var(--bg-image);
             background-size: cover;
             background-position: center;
             background-attachment: fixed;
         }
         .bg-overlay {
-            position: fixed;
-            inset: 0;
-            z-index: 1;
+            position: fixed; inset: 0; z-index: 1;
             background: linear-gradient(
                 155deg,
                 rgba(7, 9, 26, 0.91) 0%,
@@ -54,64 +51,138 @@
             z-index: 2;
             width: 100%;
             padding: 1rem;
+            display: flex;
+            justify-content: center;
         }
 
         .login-card {
             background: var(--surface);
             border: 1px solid var(--border-dim);
-            border-radius: 10px;
-            padding: 2rem;
+            border-radius: 14px;
+            padding: 1.75rem 1.75rem 2rem;
             width: 100%;
-            max-width: 360px;
-            margin: 0 auto;
+            max-width: 380px;
             backdrop-filter: var(--blur);
             -webkit-backdrop-filter: var(--blur);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.25rem;
         }
 
-        h1 {
-            font-size: 1.25rem;
+        /* ── Title ── */
+        .login-title {
+            font-size: 1.1rem;
             font-weight: 800;
-            letter-spacing: 0.06em;
+            letter-spacing: 0.08em;
             text-transform: uppercase;
-            margin-bottom: 1.75rem;
-            text-align: center;
             color: var(--accent);
+            text-align: center;
         }
 
-        label {
-            display: block;
-            font-size: 0.8rem;
-            font-weight: 600;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            margin-bottom: 0.4rem;
+        /* ── Error ── */
+        .error {
+            width: 100%;
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+            border: 1px solid var(--accent);
+            color: #f5a0b0;
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            text-align: center;
+        }
+
+        /* ── PIN dots ── */
+        .pin-dots {
+            display: flex;
+            gap: 14px;
+            justify-content: center;
+            padding: 0.25rem 0;
+        }
+        .pin-dot {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid var(--text-dim);
+            background: transparent;
+            transition: background 0.15s, border-color 0.15s, transform 0.1s;
+        }
+        .pin-dot.filled {
+            background: var(--accent);
+            border-color: var(--accent);
+            transform: scale(1.15);
+        }
+        .pin-dot.shake {
+            animation: shake 0.35s ease;
+        }
+        @keyframes shake {
+            0%,100% { transform: translateX(0); }
+            20%      { transform: translateX(-6px); }
+            40%      { transform: translateX(6px); }
+            60%      { transform: translateX(-4px); }
+            80%      { transform: translateX(4px); }
+        }
+
+        /* ── Numpad ── */
+        .numpad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            width: 100%;
+        }
+        .key {
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid var(--border-dim);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 1.5rem;
+            font-weight: 500;
+            height: 70px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.1s, transform 0.08s, border-color 0.1s;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        .key:hover   { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.18); }
+        .key:active  { background: rgba(255,255,255,0.18); transform: scale(0.94); }
+        .key.key-backspace {
+            font-size: 1.2rem;
             color: var(--text-dim);
         }
+        .key.key-backspace:hover { color: var(--accent); border-color: var(--accent); }
+        .key.key-empty { visibility: hidden; pointer-events: none; }
 
-        input[type="password"] {
+        /* Hidden form field */
+        #pin-input { display: none; }
+
+        /* Keyboard fallback */
+        .kb-fallback {
             width: 100%;
-            padding: 0.625rem 0.75rem;
+            display: none;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+        .kb-fallback input[type="password"] {
+            width: 100%;
+            padding: 0.6rem 0.85rem;
+            background: rgba(255,255,255,0.06);
             border: 1px solid var(--border-dim);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
             color: var(--text);
             font-size: 1rem;
-            margin-bottom: 1.25rem;
-            transition: border-color 0.15s, box-shadow 0.15s;
+            transition: border-color 0.15s;
         }
-        input[type="password"]:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
-        }
-
-        button[type="submit"] {
+        .kb-fallback input:focus { outline: none; border-color: var(--accent); }
+        .kb-fallback button {
             width: 100%;
-            padding: 0.7rem;
+            padding: 0.65rem;
             background: var(--accent);
             color: #fff;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             font-size: 0.9rem;
             font-weight: 700;
             letter-spacing: 0.05em;
@@ -119,17 +190,17 @@
             cursor: pointer;
             transition: opacity 0.15s;
         }
-        button[type="submit"]:hover { opacity: 0.85; }
-
-        .error {
-            background: color-mix(in srgb, var(--accent) 12%, transparent);
-            border: 1px solid var(--accent);
-            color: #f5a0b0;
-            border-radius: 6px;
-            padding: 0.5rem 0.75rem;
-            font-size: 0.875rem;
-            margin-bottom: 1rem;
+        .kb-fallback button:hover { opacity: 0.85; }
+        .toggle-kb {
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            text-align: center;
+            cursor: pointer;
+            letter-spacing: 0.04em;
+            transition: color 0.15s;
+            padding-top: 0.25rem;
         }
+        .toggle-kb:hover { color: var(--text); }
     </style>
 </head>
 <body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }};{% endif %}">
@@ -141,17 +212,137 @@
 
     <div class="login-wrap">
         <div class="login-card">
-            <h1>{{ site_settings.get('site_name') or 'FPP Control' }}</h1>
-            {% if error %}
-            <div class="error">{{ error }}</div>
+
+            {% if site_settings.get('logo_url') %}
+            <img src="{{ site_settings.logo_url | e }}" alt="Logo"
+                 style="height:48px;width:auto;object-fit:contain;border-radius:5px">
             {% endif %}
-            <form method="post" action="{{ url_for('auth.login') }}">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" autofocus required>
+
+            <div class="login-title">{{ site_settings.get('site_name') or 'FPP Control' }}</div>
+
+            {% if error %}
+            <div class="error" id="error-msg">{{ error }}</div>
+            {% endif %}
+
+            <!-- PIN dot indicators -->
+            <div class="pin-dots" id="pin-dots">
+                <div class="pin-dot" id="dot-0"></div>
+                <div class="pin-dot" id="dot-1"></div>
+                <div class="pin-dot" id="dot-2"></div>
+                <div class="pin-dot" id="dot-3"></div>
+            </div>
+
+            <!-- Hidden form posts PIN to server -->
+            <form method="post" action="{{ url_for('auth.login') }}" id="login-form">
+                <input type="password" id="pin-input" name="password" autocomplete="off">
+            </form>
+
+            <!-- Keyboard fallback (for initial password migration) -->
+            <form class="kb-fallback" id="kb-form" method="post" action="{{ url_for('auth.login') }}">
+                <input type="password" name="password" id="kb-password"
+                       placeholder="Enter password" autocomplete="current-password">
                 <button type="submit">Log In</button>
             </form>
+
+            <div class="toggle-kb" id="toggle-kb">use keyboard</div>
+
+            <!-- Numpad -->
+            <div class="numpad" id="numpad">
+                <button class="key" data-digit="1" type="button">1</button>
+                <button class="key" data-digit="2" type="button">2</button>
+                <button class="key" data-digit="3" type="button">3</button>
+                <button class="key" data-digit="4" type="button">4</button>
+                <button class="key" data-digit="5" type="button">5</button>
+                <button class="key" data-digit="6" type="button">6</button>
+                <button class="key" data-digit="7" type="button">7</button>
+                <button class="key" data-digit="8" type="button">8</button>
+                <button class="key" data-digit="9" type="button">9</button>
+                <button class="key key-backspace" id="key-back" type="button">⌫</button>
+                <button class="key" data-digit="0" type="button">0</button>
+                <button class="key key-empty" type="button" aria-hidden="true"></button>
+            </div>
+
         </div>
     </div>
 
+    <script>
+    (function () {
+        const PIN_LENGTH = 4;
+        let pin = '';
+
+        const dots    = Array.from({ length: PIN_LENGTH }, (_, i) => document.getElementById('dot-' + i));
+        const form    = document.getElementById('login-form');
+        const input   = document.getElementById('pin-input');
+        const backBtn = document.getElementById('key-back');
+
+        function updateDots() {
+            dots.forEach((d, i) => d.classList.toggle('filled', i < pin.length));
+        }
+
+        function shakeError() {
+            dots.forEach(d => {
+                d.classList.remove('shake');
+                void d.offsetWidth; // reflow to restart animation
+                d.classList.add('shake');
+            });
+        }
+
+        function pressDigit(digit) {
+            if (pin.length >= PIN_LENGTH) return;
+            pin += digit;
+            updateDots();
+            if (pin.length === PIN_LENGTH) {
+                input.value = pin;
+                form.submit();
+            }
+        }
+
+        function pressBack() {
+            if (pin.length === 0) return;
+            pin = pin.slice(0, -1);
+            updateDots();
+        }
+
+        // Numpad button clicks
+        document.getElementById('numpad').addEventListener('click', function (e) {
+            const key = e.target.closest('.key');
+            if (!key) return;
+            const digit = key.dataset.digit;
+            if (digit !== undefined) pressDigit(digit);
+        });
+
+        backBtn.addEventListener('click', pressBack);
+
+        // Physical keyboard support (for desktop / SSH access)
+        document.addEventListener('keydown', function (e) {
+            if (e.key >= '0' && e.key <= '9') pressDigit(e.key);
+            if (e.key === 'Backspace') pressBack();
+        });
+
+        {% if error %}
+        shakeError();
+        {% endif %}
+
+        // Keyboard fallback toggle
+        const toggleBtn = document.getElementById('toggle-kb');
+        const kbForm    = document.getElementById('kb-form');
+        const numpad    = document.getElementById('numpad');
+        const pinDots   = document.getElementById('pin-dots');
+        let kbMode = false;
+
+        toggleBtn.addEventListener('click', () => {
+            kbMode = !kbMode;
+            kbForm.style.display    = kbMode ? 'flex' : 'none';
+            numpad.style.display    = kbMode ? 'none' : 'grid';
+            pinDots.style.display   = kbMode ? 'none' : 'flex';
+            toggleBtn.textContent   = kbMode ? 'use numpad' : 'use keyboard';
+            if (kbMode) {
+                pin = '';
+                updateDots();
+                document.getElementById('kb-password').focus();
+            }
+        });
+    })();
+    </script>
 </body>
 </html>

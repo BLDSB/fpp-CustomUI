@@ -8,6 +8,7 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
     FPP_BASE_URL = os.environ.get("FPP_BASE_URL", "http://localhost/api")
     ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", "")
+    MASTER_PIN_HASH = os.environ.get("MASTER_PIN_HASH", "")
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL", "sqlite:///fpp_ui.db"
     )
