@@ -131,6 +131,48 @@
         nav ul a.nav-logout  { border: 1px solid var(--border-dim); }
         nav ul a.nav-logout:hover { border-color: var(--accent); color: var(--accent); }
 
+        /* ── Nav dropdown ──────────────────────────────────────────── */
+        .nav-dropdown { position: relative; }
+        .nav-dropdown-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.25em;
+            color: var(--nav-link);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            padding: 0.4rem 0.9rem;
+            border-radius: 6px;
+            transition: color 0.15s, background 0.15s;
+            white-space: nowrap;
+        }
+        .nav-dropdown-btn:hover      { color: var(--text); background: rgba(255,255,255,0.05); }
+        .nav-dropdown-btn.nav-active { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+        .nav-dropdown-btn .caret     { font-size: 0.65em; transition: transform 0.2s; display: inline-block; }
+        .nav-dropdown.open .nav-dropdown-btn .caret { transform: rotate(180deg); }
+        .nav-dropdown-menu {
+            display: none;
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            background: color-mix(in srgb, var(--nav-bg) 98%, white);
+            border: 1px solid var(--border-dim);
+            border-radius: 8px;
+            min-width: 130px;
+            flex-direction: column;
+            z-index: 200;
+            overflow: hidden;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+        }
+        .nav-dropdown.open .nav-dropdown-menu { display: flex; }
+        .nav-dropdown-menu a { border-radius: 0; }
+        .nav-dropdown-menu a.nav-active { box-shadow: none; border-left: 3px solid var(--accent); padding-left: calc(0.9rem - 3px); }
+
         /* ── Main ──────────────────────────────────────────────────── */
         main {
             flex: 1;
@@ -261,6 +303,24 @@
             }
             nav ul a.nav-logout { border: none; }
             .nav-wordmark { font-size: 0.85rem; }
+            .nav-dropdown-btn {
+                padding: 0.75rem 0.6rem;
+                font-size: 0.9rem;
+                border-radius: 4px;
+                width: 100%;
+                justify-content: space-between;
+                border-bottom: 1px solid rgba(255,255,255,0.04);
+            }
+            .nav-dropdown-btn.nav-active { box-shadow: none; border-left: 3px solid var(--accent); padding-left: calc(0.6rem - 3px); }
+            .nav-dropdown-menu {
+                position: static;
+                border: none;
+                border-radius: 0;
+                background: transparent;
+                box-shadow: none;
+                display: flex;
+                padding-left: 1rem;
+            }
 
             main { padding: 1.25rem 1rem; }
 
@@ -290,8 +350,15 @@
         <button id="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
         <ul class="nav-main">
             <li><a href="{{ url_for('main.controls') }}">Controls</a></li>
-            <li><a href="{{ url_for('colors.colors_page') }}">Custom Color</a></li>
-            <li><a href="{{ url_for('effects.effects_page') }}">Effects</a></li>
+            <li class="nav-dropdown">
+                <button class="nav-dropdown-btn" aria-haspopup="true" aria-expanded="false">
+                    Custom <span class="caret">▾</span>
+                </button>
+                <ul class="nav-dropdown-menu">
+                    <li><a href="{{ url_for('colors.colors_page') }}">Color</a></li>
+                    <li><a href="{{ url_for('effects.effects_page') }}">Effects</a></li>
+                </ul>
+            </li>
             <li><a href="{{ url_for('scheduler.schedule_page') }}">Schedule</a></li>
         </ul>
         <ul class="nav-utils">
@@ -323,6 +390,32 @@
                 if (href && (path === href || (href !== '/' && path.startsWith(href)))) {
                     a.classList.add('nav-active');
                 }
+            });
+            // If a child of the dropdown is active, mark the toggle active too
+            document.querySelectorAll('.nav-dropdown').forEach(dd => {
+                if (dd.querySelector('.nav-active')) {
+                    dd.querySelector('.nav-dropdown-btn').classList.add('nav-active');
+                }
+            });
+        })();
+
+        // Dropdown toggle
+        (function () {
+            document.querySelectorAll('.nav-dropdown').forEach(dd => {
+                const btn  = dd.querySelector('.nav-dropdown-btn');
+                const menu = dd.querySelector('.nav-dropdown-menu');
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isOpen = dd.classList.toggle('open');
+                    btn.setAttribute('aria-expanded', isOpen);
+                });
+                menu.addEventListener('click', (e) => e.stopPropagation());
+            });
+            document.addEventListener('click', () => {
+                document.querySelectorAll('.nav-dropdown.open').forEach(dd => {
+                    dd.classList.remove('open');
+                    dd.querySelector('.nav-dropdown-btn').setAttribute('aria-expanded', 'false');
+                });
             });
         })();
 
