@@ -396,7 +396,8 @@
         </div>
     </div>
 
-    <!-- Master PIN -->
+    <!-- Master PIN (only visible when logged in via master PIN) -->
+    {% if session.get('is_master') %}
     <div class="settings-card">
         <h2>Master PIN</h2>
 
@@ -417,6 +418,7 @@
             <button id="btn-set-master" class="btn-save">Set Master PIN</button>
         </div>
     </div>
+    {% endif %}
 
 </div>
 

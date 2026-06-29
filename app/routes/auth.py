@@ -24,6 +24,7 @@ def login():
         if admin_ok or master_ok:
             session.clear()
             session["logged_in"] = True
+            session["is_master"] = bool(master_ok)
             return redirect(url_for("main.index"))
 
         error = "Invalid PIN."
