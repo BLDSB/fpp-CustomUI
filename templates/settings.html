@@ -396,6 +396,28 @@
         </div>
     </div>
 
+    <!-- Master PIN -->
+    <div class="settings-card">
+        <h2>Master PIN</h2>
+
+        <div class="form-field">
+            <label for="s-master-new">New Master PIN</label>
+            <input type="password" id="s-master-new" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="new-password" placeholder="••••">
+            <span class="hint">The master PIN always works even if the regular PIN is changed. Store it somewhere safe.</span>
+        </div>
+
+        <div class="form-field">
+            <label for="s-master-confirm">Confirm Master PIN</label>
+            <input type="password" id="s-master-confirm" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="new-password" placeholder="••••">
+        </div>
+
+        <div>
+            <button id="btn-set-master" class="btn-save">Set Master PIN</button>
+        </div>
+    </div>
+
 </div>
 
 <!-- Genius Pro reboot confirmation modal -->
@@ -754,6 +776,43 @@
             document.getElementById('s-cur-pw').value    = '';
             document.getElementById('s-new-pw').value    = '';
             document.getElementById('s-confirm-pw').value = '';
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btn-set-master').addEventListener('click', async () => {
+        const btn     = document.getElementById('btn-set-master');
+        const newPin  = document.getElementById('s-master-new').value;
+        const confirm = document.getElementById('s-master-confirm').value;
+
+        if (!newPin || !confirm) {
+            showToast('Please fill in both master PIN fields.', 'error');
+            return;
+        }
+        if (newPin !== confirm) {
+            showToast('Master PINs do not match.', 'error');
+            return;
+        }
+        if (!/^\d{4}$/.test(newPin)) {
+            showToast('Master PIN must be exactly 4 digits.', 'error');
+            return;
+        }
+
+        btn.disabled = true;
+        try {
+            const res = await fetch((window.APP_ROOT||'') + '/api/set-master-pin', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ new_pin: newPin }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to set master PIN.');
+            showToast('Master PIN set successfully.', 'success');
+            document.getElementById('s-master-new').value     = '';
+            document.getElementById('s-master-confirm').value = '';
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {

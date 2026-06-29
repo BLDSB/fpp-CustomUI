@@ -16,14 +16,17 @@ def login():
         password = request.form.get("password", "")
         stored_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
 
-        if stored_hash and bcrypt.checkpw(
-            password.encode("utf-8"), stored_hash.encode("utf-8")
-        ):
+        master_hash = current_app.config.get("MASTER_PIN_HASH", "")
+
+        admin_ok = stored_hash and bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+        master_ok = master_hash and bcrypt.checkpw(password.encode("utf-8"), master_hash.encode("utf-8"))
+
+        if admin_ok or master_ok:
             session.clear()
             session["logged_in"] = True
             return redirect(url_for("main.index"))
 
-        error = "Invalid password."
+        error = "Invalid PIN."
 
     return render_template("login.html", error=error)
 
@@ -60,6 +63,28 @@ def change_pin():
         return jsonify({"error": "Could not save PIN — is the .env file writable?"}), 500
 
     current_app.config["ADMIN_PASSWORD_HASH"] = new_hash
+    return jsonify({"ok": True})
+
+
+@auth_bp.post("/api/set-master-pin")
+@login_required
+def set_master_pin():
+    data = request.get_json(silent=True) or {}
+    new_pin = str(data.get("new_pin", "")).strip()
+
+    if not new_pin.isdigit() or len(new_pin) != 4:
+        return jsonify({"error": "Master PIN must be exactly 4 digits."}), 400
+
+    new_hash = bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
+
+    env_path = os.path.normpath(os.path.join(current_app.root_path, "..", ".env"))
+    try:
+        set_key(env_path, "MASTER_PIN_HASH", new_hash, quote_mode="never")
+    except Exception as exc:
+        current_app.logger.warning("Could not persist master PIN hash to .env: %s", exc)
+        return jsonify({"error": "Could not save master PIN — is the .env file writable?"}), 500
+
+    current_app.config["MASTER_PIN_HASH"] = new_hash
     return jsonify({"ok": True})
 
 

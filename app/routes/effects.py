@@ -31,9 +31,13 @@ def list_effects():
     except Exception as exc:
         return jsonify({"error": str(exc)}), 502
 
+    MUSIC_NOTE_CHARS = set("♩♪♫♬")
+
     builtin, wled = [], []
     for e in effects:
         if e == "Stop Effects":
+            continue
+        if any(c in e for c in MUSIC_NOTE_CHARS):
             continue
         if e.startswith("WLED - "):
             wled.append(e)
