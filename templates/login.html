@@ -59,7 +59,7 @@
             background: var(--surface);
             border: 1px solid var(--border-dim);
             border-radius: 14px;
-            padding: 1.75rem 1.75rem 2rem;
+            padding: 1.25rem 1.25rem 1.5rem;
             width: 100%;
             max-width: 380px;
             backdrop-filter: var(--blur);
@@ -67,7 +67,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 1.25rem;
+            gap: 0.75rem;
         }
 
         /* ── Title ── */
@@ -97,7 +97,7 @@
             display: flex;
             gap: 14px;
             justify-content: center;
-            padding: 0.25rem 0;
+            padding: 0;
         }
         .pin-dot {
             width: 18px;
@@ -127,17 +127,17 @@
         .numpad {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 7px;
+            gap: 6px;
             width: 100%;
         }
         .key {
             background: rgba(255, 255, 255, 0.07);
             border: 1px solid var(--border-dim);
-            border-radius: 8px;
+            border-radius: 7px;
             color: var(--text);
-            font-size: 1.05rem;
+            font-size: 0.85rem;
             font-weight: 500;
-            height: 49px;
+            height: 39px;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -149,7 +149,7 @@
         .key:hover   { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.18); }
         .key:active  { background: rgba(255,255,255,0.18); transform: scale(0.94); }
         .key.key-backspace {
-            font-size: 0.85rem;
+            font-size: 0.7rem;
             color: var(--text-dim);
         }
         .key.key-backspace:hover { color: var(--accent); border-color: var(--accent); }
