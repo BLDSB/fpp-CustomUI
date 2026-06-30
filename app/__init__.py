@@ -97,6 +97,12 @@ def create_app():
     from app.routes.effects import effects_bp
     app.register_blueprint(effects_bp)
 
+    # Start the background alert monitor (daemon thread — zero cost when idle).
+    import os
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        from app.alert_monitor import start_monitor
+        start_monitor(app)
+
     # Allow the app to run behind a reverse proxy at a sub-path (e.g. /CustomUI).
     # Apache sets X-Forwarded-Prefix so url_for() generates correct links.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_prefix=1)

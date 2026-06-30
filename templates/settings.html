@@ -178,6 +178,58 @@
     }
     .btn-upload:hover { color: var(--accent); border-color: var(--accent); }
     .btn-upload:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Alert settings rows */
+    .settings-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.6rem;
+        flex-wrap: wrap;
+    }
+    .settings-label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-dim);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        width: 130px;
+        flex-shrink: 0;
+    }
+    .settings-input {
+        flex: 1;
+        min-width: 180px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.45rem 0.7rem;
+        color: var(--text);
+        font-size: 0.88rem;
+        transition: border-color 0.15s;
+    }
+    .settings-input:focus { outline: none; border-color: var(--accent); }
+
+    /* Toggle switch */
+    .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+        position: absolute; inset: 0;
+        background: rgba(255,255,255,0.12);
+        border-radius: 24px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    .toggle-track::before {
+        content: '';
+        position: absolute;
+        left: 3px; top: 3px;
+        width: 18px; height: 18px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track { background: var(--accent); }
+    .toggle-switch input:checked + .toggle-track::before { transform: translateX(18px); }
 </style>
 {% endblock %}
 
@@ -312,6 +364,85 @@
             </button>
         </div>
         <p id="restore-status" style="font-size:0.8rem;color:var(--text-dim);margin:0;display:none"></p>
+    </div>
+
+    <!-- Alerts -->
+    <div class="settings-card">
+        <h2>Alerts</h2>
+        <p style="font-size:0.82rem;color:var(--text-dim);margin:0 0 0.75rem">
+            Send an email alert if a scheduled playlist is not playing within the
+            configured delay. Uses Gmail with an
+            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener"
+               style="color:var(--accent)">App Password</a>
+            (requires 2-Step Verification on your Google account).
+            For SMS, enter your carrier's email-to-text address as the recipient
+            (e.g. <em>5551234567@vtext.com</em> for Verizon, <em>@txt.att.net</em> for AT&amp;T).
+        </p>
+
+        <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.9rem">
+            <label style="font-size:0.82rem;font-weight:600;color:var(--text-dim);letter-spacing:0.06em;text-transform:uppercase">
+                Enable Alerts
+            </label>
+            <label class="toggle-switch" style="flex-shrink:0">
+                <input type="checkbox" id="s-alert-enabled"
+                    {{ 'checked' if settings.get('alert_enabled') == '1' else '' }}>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+
+        <div class="settings-row">
+            <label class="settings-label">SMTP Server</label>
+            <input type="text" id="s-alert-smtp-host" class="settings-input"
+                   placeholder="smtp.gmail.com"
+                   value="{{ settings.get('alert_smtp_host', 'smtp.gmail.com') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">SMTP Port</label>
+            <input type="number" id="s-alert-smtp-port" class="settings-input"
+                   style="max-width:100px" min="1" max="65535"
+                   value="{{ settings.get('alert_smtp_port', '587') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Gmail Address</label>
+            <input type="email" id="s-alert-smtp-user" class="settings-input"
+                   placeholder="you@gmail.com"
+                   value="{{ settings.get('alert_smtp_user', '') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">App Password</label>
+            <input type="password" id="s-alert-smtp-pass" class="settings-input"
+                   placeholder="16-character app password"
+                   value="{{ settings.get('alert_smtp_pass', '') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">From Address</label>
+            <input type="email" id="s-alert-email-from" class="settings-input"
+                   placeholder="Same as Gmail address"
+                   value="{{ settings.get('alert_email_from', '') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Send Alerts To</label>
+            <input type="text" id="s-alert-email-to" class="settings-input"
+                   placeholder="email or 5551234567@vtext.com"
+                   value="{{ settings.get('alert_email_to', '') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Check Delay</label>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+                <input type="number" id="s-alert-delay" class="settings-input"
+                       style="max-width:80px" min="1" max="60"
+                       value="{{ settings.get('alert_delay_minutes', '5') | e }}">
+                <span style="font-size:0.82rem;color:var(--text-dim)">minutes after scheduled start</span>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
+            <button id="btn-save-alerts" class="btn-save">Save Alert Settings</button>
+            <button id="btn-test-alert" class="btn-save"
+                    style="background:transparent;border:1px solid var(--accent);color:var(--accent)">
+                Send Test Email
+            </button>
+        </div>
     </div>
 
     <!-- Zones -->
@@ -846,6 +977,55 @@
             showToast('Error: ' + err.message, 'error');
         } finally {
             btn.disabled = false;
+        }
+    });
+
+    // ── Alert settings ─────────────────────────────────────────
+    document.getElementById('btn-save-alerts').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-save-alerts');
+        btn.disabled = true;
+        try {
+            const res = await fetch((window.APP_ROOT||'') + '/api/settings', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    alert_enabled:       document.getElementById('s-alert-enabled').checked ? '1' : '0',
+                    alert_smtp_host:     document.getElementById('s-alert-smtp-host').value.trim(),
+                    alert_smtp_port:     document.getElementById('s-alert-smtp-port').value.trim(),
+                    alert_smtp_user:     document.getElementById('s-alert-smtp-user').value.trim(),
+                    alert_smtp_pass:     document.getElementById('s-alert-smtp-pass').value.trim(),
+                    alert_email_from:    document.getElementById('s-alert-email-from').value.trim(),
+                    alert_email_to:      document.getElementById('s-alert-email-to').value.trim(),
+                    alert_delay_minutes: document.getElementById('s-alert-delay').value.trim(),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+            showToast('Alert settings saved', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('btn-test-alert').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-test-alert');
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
+        try {
+            const res  = await fetch((window.APP_ROOT||'') + '/api/alerts/test', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            showToast('Test email sent — check your inbox', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Send Test Email';
         }
     });
 })();
