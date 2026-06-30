@@ -127,17 +127,17 @@
         .numpad {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
+            gap: 7px;
             width: 100%;
         }
         .key {
             background: rgba(255, 255, 255, 0.07);
             border: 1px solid var(--border-dim);
-            border-radius: 10px;
+            border-radius: 8px;
             color: var(--text);
-            font-size: 1.5rem;
+            font-size: 1.05rem;
             font-weight: 500;
-            height: 70px;
+            height: 49px;
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -149,7 +149,7 @@
         .key:hover   { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.18); }
         .key:active  { background: rgba(255,255,255,0.18); transform: scale(0.94); }
         .key.key-backspace {
-            font-size: 1.2rem;
+            font-size: 0.85rem;
             color: var(--text-dim);
         }
         .key.key-backspace:hover { color: var(--accent); border-color: var(--accent); }
