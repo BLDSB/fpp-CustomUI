@@ -79,56 +79,11 @@
     .system-check-label input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 
     /* ── Effect browser ─────────────────────────────────────────── */
-    .effect-search {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        background: rgba(0,0,0,0.3);
-        border: 1px solid var(--border-dim);
-        border-radius: 7px;
-        padding: 0.45rem 0.8rem;
-        margin-bottom: 1rem;
-    }
-    .effect-search input {
-        background: none;
-        border: none;
-        outline: none;
-        color: var(--text);
-        font-size: 0.9rem;
-        flex: 1;
-        min-width: 0;
-    }
-    .effect-search input::placeholder { color: var(--text-dim); }
-    .effect-search .search-icon { color: var(--text-dim); font-size: 0.85rem; flex-shrink: 0; }
-
-    .effect-section { margin-bottom: 1.1rem; }
-    .effect-section-header {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.72rem;
-        color: var(--text-dim);
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        cursor: pointer;
-        padding: 0.3rem 0;
-        user-select: none;
-    }
-    .effect-section-header .count {
-        background: rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: 0.05rem 0.45rem;
-        font-size: 0.68rem;
-    }
-    .effect-section-header .chevron { margin-left: auto; transition: transform 0.18s; }
-    .effect-section-header.collapsed .chevron { transform: rotate(-90deg); }
     .effect-grid {
         display: flex;
         flex-wrap: wrap;
         gap: 0.4rem;
-        padding-top: 0.5rem;
     }
-    .effect-grid.hidden { display: none; }
     .effect-btn {
         background: rgba(255,255,255,0.05);
         border: 1px solid var(--border-dim);
@@ -347,28 +302,7 @@
     <!-- Right: Effect browser -->
     <div class="effects-card">
         <h2>Effects</h2>
-        <div class="effect-search">
-            <span class="search-icon">&#128269;</span>
-            <input type="text" id="effect-search" placeholder="Search effects…" autocomplete="off">
-        </div>
-
-        <div id="effect-no-results">No effects match your search.</div>
-
-        <div class="effect-section" id="section-builtin">
-            <div class="effect-section-header" data-target="grid-builtin">
-                Built-in <span class="count" id="count-builtin">0</span>
-                <span class="chevron">&#9660;</span>
-            </div>
-            <div class="effect-grid" id="grid-builtin"></div>
-        </div>
-
-        <div class="effect-section" id="section-wled">
-            <div class="effect-section-header" data-target="grid-wled">
-                WLED <span class="count" id="count-wled">0</span>
-                <span class="chevron">&#9660;</span>
-            </div>
-            <div class="effect-grid" id="grid-wled"></div>
-        </div>
+        <div class="effect-grid" id="effect-grid"></div>
     </div>
 </div>
 
@@ -476,64 +410,30 @@
     }
 
     // ── Effect browser ──────────────────────────────────────────
-    function buildGrid(containerId, effects, isWled) {
-        const grid = document.getElementById(containerId);
-        grid.innerHTML = '';
-        effects.forEach(fullName => {
-            const label = isWled ? fullName.replace(/^WLED - /, '') : fullName;
-            const btn = document.createElement('button');
-            btn.className = 'effect-btn';
-            btn.textContent = label;
-            btn.title = fullName;
-            btn.dataset.effect = fullName;
-            btn.addEventListener('click', () => selectEffect(fullName));
-            grid.appendChild(btn);
-        });
-    }
+    const ALLOWED_EFFECTS = [
+        'Dynamic Smooth', 'Plasma', 'Sinelon', 'Fireworks', 'Meteor',
+        'Color Waves', 'Matrix', 'Bars', 'Swirl', 'Aurora',
+    ];
 
     apiFetch('/api/effects/list').then(data => {
         allEffects = data;
-        document.getElementById('count-builtin').textContent = data.builtin.length;
-        document.getElementById('count-wled').textContent    = data.wled.length;
-        buildGrid('grid-builtin', data.builtin, false);
-        buildGrid('grid-wled',    data.wled,    true);
+        const all = [...data.builtin, ...data.wled];
+        const grid = document.getElementById('effect-grid');
+        ALLOWED_EFFECTS.forEach(name => {
+            // Find matching effect (case-insensitive, strip "WLED - " prefix)
+            const match = all.find(e =>
+                e.toLowerCase() === name.toLowerCase() ||
+                e.replace(/^WLED - /i, '').toLowerCase() === name.toLowerCase()
+            );
+            if (!match) return;
+            const btn = document.createElement('button');
+            btn.className = 'effect-btn';
+            btn.textContent = name;
+            btn.dataset.effect = match;
+            btn.addEventListener('click', () => selectEffect(match));
+            grid.appendChild(btn);
+        });
     }).catch(err => showToast('Could not load effects: ' + err.message, 'error'));
-
-    // Collapsible sections
-    document.querySelectorAll('.effect-section-header').forEach(hdr => {
-        hdr.addEventListener('click', () => {
-            const grid = document.getElementById(hdr.dataset.target);
-            const collapsed = hdr.classList.toggle('collapsed');
-            grid.classList.toggle('hidden', collapsed);
-        });
-    });
-
-    // Search / filter
-    document.getElementById('effect-search').addEventListener('input', function () {
-        const q = this.value.trim().toLowerCase();
-        let totalVisible = 0;
-
-        ['builtin','wled'].forEach(cat => {
-            const grid = document.getElementById('grid-' + cat);
-            const isWled = cat === 'wled';
-            let catVisible = 0;
-            grid.querySelectorAll('.effect-btn').forEach(btn => {
-                const match = !q || btn.dataset.effect.toLowerCase().includes(q);
-                btn.style.display = match ? '' : 'none';
-                if (match) catVisible++;
-            });
-            document.getElementById('count-' + cat).textContent = catVisible;
-            // Expand section if search is active and has results
-            if (q && catVisible > 0) {
-                document.querySelector(`[data-target="grid-${cat}"]`).classList.remove('collapsed');
-                grid.classList.remove('hidden');
-            }
-            totalVisible += catVisible;
-        });
-
-        document.getElementById('effect-no-results').style.display =
-            totalVisible === 0 && q ? '' : 'none';
-    });
 
     // ── Fonts (fetched once, used by Text effect) ────────────────
     apiFetch('/api/effects/fonts').then(fonts => {
@@ -781,8 +681,8 @@
 
     document.getElementById('btn-save-preset').addEventListener('click', async () => {
         if (!currentEffect) { showToast('Select an effect first.', 'error'); return; }
-        const name = prompt('Name this preset:');
-        if (!name || !name.trim()) return;
+        const name = await showInputModal('Name this preset:', 'Preset name…');
+        if (!name) return;
         try {
             const preset = await apiFetch('/api/effects/presets', 'POST', {
                 name:        name.trim(),

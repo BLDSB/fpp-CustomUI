@@ -507,8 +507,8 @@
 
     // ── Save color ─────────────────────────────────────────────
     btnSave.addEventListener('click', async () => {
-        const name = prompt('Enter a name for this color:');
-        if (!name || !name.trim()) return;
+        const name = await showInputModal('Enter a name for this color:', 'Color name…');
+        if (!name) return;
         try {
             const btn = await apiFetch('/colors/save', 'POST', {
                 name: name.trim(),
@@ -619,8 +619,8 @@
     }
 
     btnSceneSave.addEventListener('click', async () => {
-        const name = prompt('Enter a name for this scene:');
-        if (!name || !name.trim()) return;
+        const name = await showInputModal('Enter a name for this scene:', 'Scene name…');
+        if (!name) return;
 
         // Collect current colors for all visible zone pills
         const zones = {};
