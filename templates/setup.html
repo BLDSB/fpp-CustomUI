@@ -230,6 +230,9 @@
         const stepLabel = document.getElementById('step-label');
         const backBtn   = document.getElementById('key-back');
 
+        // The numpad is not rendered on the blocked (non-LAN) 403 page.
+        if (!form) return;
+
         function updateDots() {
             dots.forEach((d, i) => d.classList.toggle('filled', i < pin.length));
         }

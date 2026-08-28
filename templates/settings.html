@@ -785,8 +785,12 @@
         }
     });
 
-    document.getElementById('btn-set-master').addEventListener('click', async () => {
-        const btn     = document.getElementById('btn-set-master');
+    // The master-PIN card only renders for a master session, so this block must
+    // not assume the button exists — an unguarded null here aborts the rest of
+    // the script and silently unbinds Save Settings below.
+    const masterBtn = document.getElementById('btn-set-master');
+    if (masterBtn) masterBtn.addEventListener('click', async () => {
+        const btn     = masterBtn;
         const newPin  = document.getElementById('s-master-new').value;
         const confirm = document.getElementById('s-master-confirm').value;
 
