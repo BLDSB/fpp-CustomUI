@@ -157,49 +157,6 @@
         /* Hidden form field */
         #pin-input { display: none; }
 
-        /* Keyboard fallback */
-        .kb-fallback {
-            width: 100%;
-            display: none;
-            flex-direction: column;
-            gap: 0.6rem;
-        }
-        .kb-fallback input[type="password"] {
-            width: 100%;
-            padding: 0.6rem 0.85rem;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid var(--border-dim);
-            border-radius: 8px;
-            color: var(--text);
-            font-size: 1rem;
-            transition: border-color 0.15s;
-        }
-        .kb-fallback input:focus { outline: none; border-color: var(--accent); }
-        .kb-fallback button {
-            width: 100%;
-            padding: 0.65rem;
-            background: var(--accent);
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            cursor: pointer;
-            transition: opacity 0.15s;
-        }
-        .kb-fallback button:hover { opacity: 0.85; }
-        .toggle-kb {
-            font-size: 0.72rem;
-            color: var(--text-dim);
-            text-align: center;
-            cursor: pointer;
-            letter-spacing: 0.04em;
-            transition: color 0.15s;
-            padding-top: 0.25rem;
-        }
-        .toggle-kb:hover { color: var(--text); }
     </style>
 </head>
 <body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }};{% endif %}">
@@ -236,14 +193,6 @@
                 <input type="password" id="pin-input" name="password" autocomplete="off">
             </form>
 
-            <!-- Keyboard fallback (for initial password migration) -->
-            <form class="kb-fallback" id="kb-form" method="post" action="{{ url_for('auth.login') }}">
-                <input type="password" name="password" id="kb-password"
-                       placeholder="Enter password" autocomplete="current-password">
-                <button type="submit">Log In</button>
-            </form>
-
-            <div class="toggle-kb" id="toggle-kb">use keyboard</div>
 
             <!-- Numpad -->
             <div class="numpad" id="numpad">
@@ -322,25 +271,6 @@
         shakeError();
         {% endif %}
 
-        // Keyboard fallback toggle
-        const toggleBtn = document.getElementById('toggle-kb');
-        const kbForm    = document.getElementById('kb-form');
-        const numpad    = document.getElementById('numpad');
-        const pinDots   = document.getElementById('pin-dots');
-        let kbMode = false;
-
-        toggleBtn.addEventListener('click', () => {
-            kbMode = !kbMode;
-            kbForm.style.display    = kbMode ? 'flex' : 'none';
-            numpad.style.display    = kbMode ? 'none' : 'grid';
-            pinDots.style.display   = kbMode ? 'none' : 'flex';
-            toggleBtn.textContent   = kbMode ? 'use numpad' : 'use keyboard';
-            if (kbMode) {
-                pin = '';
-                updateDots();
-                document.getElementById('kb-password').focus();
-            }
-        });
     })();
     </script>
 </body>
