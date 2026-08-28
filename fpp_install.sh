@@ -33,48 +33,32 @@ echo "▶ Installing / upgrading Python dependencies..."
 echo "✓ Python dependencies installed."
 echo ""
 
-# ── 2. .env — only on first install ───────────────────────────────────────────
+# ── 2. .env — only on first install ──────────────────────────────
 if [ ! -f "$PLUGIN_DIR/.env" ]; then
-    echo "▶ Generating .env and initial admin password..."
+    echo "▶ Generating .env..."
 
-    # Generate a random 12-character alphanumeric password
-    INIT_PW=$("$PLUGIN_DIR/venv/bin/python" -c \
-        "import secrets, string; \
-         print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12)))")
-
-    # Use Python to write the .env (avoids shell escaping issues with bcrypt '$' signs)
-    "$PLUGIN_DIR/venv/bin/python" - "$PLUGIN_DIR" "$INIT_PW" << 'PYEOF'
-import sys, os, bcrypt, secrets
+    # No admin PIN is created here. The controller ships unprovisioned and the
+    # first visitor on the local network chooses a PIN via the setup page — so
+    # no credential ever has to be read off this output and typed in by hand.
+    "$PLUGIN_DIR/venv/bin/python" - "$PLUGIN_DIR" << 'PYEOF'
+import sys, os, secrets
 
 plugin_dir = sys.argv[1]
-init_pw    = sys.argv[2]
 
 with open(os.path.join(plugin_dir, '.env.example')) as f:
     content = f.read()
 
-secret_key     = secrets.token_hex(32)
-internal_token = secrets.token_hex(24)
-pw_hash        = bcrypt.hashpw(init_pw.encode(), bcrypt.gensalt()).decode()
-
 content = content.replace('SECRET_KEY=replace-with-a-strong-random-value',
-                           f'SECRET_KEY={secret_key}')
+                           f'SECRET_KEY={secrets.token_hex(32)}')
 content = content.replace('INTERNAL_TOKEN=',
-                           f'INTERNAL_TOKEN={internal_token}')
-content = content.replace('ADMIN_PASSWORD_HASH=',
-                           f'ADMIN_PASSWORD_HASH={pw_hash}')
+                           f'INTERNAL_TOKEN={secrets.token_hex(24)}')
+
+# ADMIN_PASSWORD_HASH and MASTER_PIN_HASH are intentionally left empty.
 
 with open(os.path.join(plugin_dir, '.env'), 'w') as f:
     f.write(content)
 PYEOF
 
-    PI_IP=$(hostname -I | awk '{print $1}')
-    echo ""
-    echo "┌──────────────────────────────────────────────────────┐"
-    echo "│  INITIAL LOGIN PASSWORD: $INIT_PW               │"
-    echo "│  URL: http://$PI_IP/CustomUI                    │"
-    echo "│  Change this password after first login!             │"
-    echo "└──────────────────────────────────────────────────────┘"
-    echo ""
     echo "✓ .env created."
 else
     echo "✓ .env already exists — keeping existing settings."
@@ -132,5 +116,6 @@ echo "╔═══════════════════════�
 echo "║  Installation complete!                              ║"
 echo "║                                                      ║"
 echo "║  Open http://$PI_IP/CustomUI in a browser     ║"
+echo "║  to choose your PIN and finish setup.                ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""

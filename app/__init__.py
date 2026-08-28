@@ -1,7 +1,7 @@
 import json
 import os
 
-from flask import Flask
+from flask import Flask, redirect, request, url_for
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -96,6 +96,29 @@ def create_app():
 
     from app.routes.effects import effects_bp
     app.register_blueprint(effects_bp)
+
+    @app.before_request
+    def _require_provisioning():
+        """Funnel a fresh install to the first-run setup page.
+
+        Enforced on every request rather than relying on the redirect alone, so
+        a stale session cookie cannot skip the claim.
+        """
+        from app.routes.auth import is_unprovisioned
+
+        # FPP playlist callbacks authenticate by INTERNAL_TOKEN, not by session,
+        # so they must keep working regardless of provisioning state — otherwise
+        # clearing the PIN on a configured Pi would break every scene playlist.
+        if request.path.startswith("/internal/"):
+            return None
+        # Let unknown paths 404 normally instead of redirecting to setup.
+        if request.endpoint is None:
+            return None
+        if request.endpoint in ("static", "auth.setup"):
+            return None
+        if is_unprovisioned():
+            return redirect(url_for("auth.setup"))
+        return None
 
     # Allow the app to run behind a reverse proxy at a sub-path (e.g. /CustomUI).
     # Apache sets X-Forwarded-Prefix so url_for() generates correct links.
