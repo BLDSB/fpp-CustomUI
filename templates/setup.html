@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ site_settings.get('site_name') or 'FPP Control' }} — Login</title>
+    <title>{{ site_settings.get('site_name') or 'FPP Control' }} — Setup</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -27,22 +27,6 @@
             min-height: 100vh;
             user-select: none;
             -webkit-user-select: none;
-        }
-
-        .bg-layer {
-            position: fixed; inset: 0; z-index: 0;
-            background-image: var(--bg-image);
-            background-size: cover;
-            background-position: center;
-        }
-        .bg-overlay {
-            position: fixed; inset: 0; z-index: 1;
-            background: linear-gradient(
-                155deg,
-                rgba(7, 9, 26, 0.91) 0%,
-                rgba(7, 9, 26, 0.76) 50%,
-                rgba(7, 9, 26, 0.91) 100%
-            );
         }
 
         .login-wrap {
@@ -76,6 +60,18 @@
             letter-spacing: 0.08em;
             text-transform: uppercase;
             color: var(--accent);
+            text-align: center;
+        }
+        .setup-sub {
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            text-align: center;
+            line-height: 1.4;
+        }
+        .step-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text);
             text-align: center;
         }
 
@@ -154,31 +150,35 @@
         .key.key-backspace:hover { color: var(--accent); border-color: var(--accent); }
         .key.key-empty { visibility: hidden; pointer-events: none; }
 
-        /* Hidden form field */
-        #pin-input { display: none; }
-
+        /* Hidden form fields */
+        #pin-input, #confirm-input { display: none; }
     </style>
 </head>
-<body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }};{% endif %}">
-
-    {% if site_settings.get('bg_image_url') %}
-    <div class="bg-layer"></div>
-    <div class="bg-overlay"></div>
-    {% endif %}
+<body>
 
     <div class="login-wrap">
         <div class="login-card">
 
-            {% if site_settings.get('logo_url') %}
-            <img src="{{ site_settings.logo_url | e }}" alt="Logo"
-                 style="height:48px;width:auto;object-fit:contain;border-radius:5px">
-            {% endif %}
-
             <div class="login-title">{{ site_settings.get('site_name') or 'FPP Control' }}</div>
+
+            {% if blocked %}
+            <div class="error">
+                Setup must be run from the local network.
+            </div>
+            <div class="setup-sub">
+                Open this page from a device on the same network as this controller.
+            </div>
+            {% else %}
+
+            <div class="setup-sub">
+                First-time setup — choose a PIN to secure this controller.
+            </div>
 
             {% if error %}
             <div class="error" id="error-msg">{{ error }}</div>
             {% endif %}
+
+            <div class="step-label" id="step-label">Choose a 4-digit PIN</div>
 
             <!-- PIN dot indicators -->
             <div class="pin-dots" id="pin-dots">
@@ -188,11 +188,11 @@
                 <div class="pin-dot" id="dot-3"></div>
             </div>
 
-            <!-- Hidden form posts PIN to server -->
-            <form method="post" action="{{ url_for('auth.login') }}" id="login-form">
-                <input type="password" id="pin-input" name="password" autocomplete="off">
+            <!-- Hidden form posts both PINs to the server -->
+            <form method="post" action="{{ url_for('auth.setup') }}" id="setup-form">
+                <input type="password" id="pin-input"     name="pin"     autocomplete="off">
+                <input type="password" id="confirm-input" name="confirm" autocomplete="off">
             </form>
-
 
             <!-- Numpad -->
             <div class="numpad" id="numpad">
@@ -210,18 +210,25 @@
                 <button class="key key-empty" type="button" aria-hidden="true"></button>
             </div>
 
+            {% endif %}
+
         </div>
     </div>
 
+    {% if not blocked %}
     <script>
     (function () {
         const PIN_LENGTH = 4;
-        let pin = '';
+        let pin   = '';   // digits entered on the current step
+        let first = '';   // PIN captured on step 1
+        let step  = 1;
 
-        const dots    = Array.from({ length: PIN_LENGTH }, (_, i) => document.getElementById('dot-' + i));
-        const form    = document.getElementById('login-form');
-        const input   = document.getElementById('pin-input');
-        const backBtn = document.getElementById('key-back');
+        const dots      = Array.from({ length: PIN_LENGTH }, (_, i) => document.getElementById('dot-' + i));
+        const form      = document.getElementById('setup-form');
+        const pinInput  = document.getElementById('pin-input');
+        const confInput = document.getElementById('confirm-input');
+        const stepLabel = document.getElementById('step-label');
+        const backBtn   = document.getElementById('key-back');
 
         function updateDots() {
             dots.forEach((d, i) => d.classList.toggle('filled', i < pin.length));
@@ -235,13 +242,39 @@
             });
         }
 
+        function resetToFirstStep(message) {
+            step  = 1;
+            first = '';
+            pin   = '';
+            updateDots();
+            shakeError();
+            stepLabel.textContent = message;
+        }
+
         function pressDigit(digit) {
             if (pin.length >= PIN_LENGTH) return;
             pin += digit;
             updateDots();
-            if (pin.length === PIN_LENGTH) {
-                input.value = pin;
+
+            if (pin.length < PIN_LENGTH) return;
+
+            if (step === 1) {
+                first = pin;
+                pin   = '';
+                step  = 2;
+                // Brief pause so the fourth dot registers before the pad clears.
+                setTimeout(function () {
+                    updateDots();
+                    stepLabel.textContent = 'Confirm your PIN';
+                }, 150);
+            } else if (pin === first) {
+                pinInput.value  = first;
+                confInput.value = pin;
                 form.submit();
+            } else {
+                setTimeout(function () {
+                    resetToFirstStep('PINs did not match — choose a 4-digit PIN');
+                }, 150);
             }
         }
 
@@ -251,7 +284,6 @@
             updateDots();
         }
 
-        // Numpad button clicks
         document.getElementById('numpad').addEventListener('click', function (e) {
             const key = e.target.closest('.key');
             if (!key) return;
@@ -270,8 +302,8 @@
         {% if error %}
         shakeError();
         {% endif %}
-
     })();
     </script>
+    {% endif %}
 </body>
 </html>
