@@ -14,7 +14,7 @@
             --border-dim: rgba(255, 255, 255, 0.07);
             --text:       #dde0f0;
             --text-dim:   #6e7090;
-            --blur:       blur(16px);
+            --blur:       none; /* Pi 3 kiosk has no GPU accel; backdrop-filter blur is CPU-only and caused renderer hangs */
         }
 
         body {
@@ -34,7 +34,6 @@
             background-image: var(--bg-image);
             background-size: cover;
             background-position: center;
-            background-attachment: fixed;
         }
         .bg-overlay {
             position: fixed; inset: 0; z-index: 1;
