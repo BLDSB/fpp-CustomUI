@@ -2,7 +2,7 @@
   "name": "Custom Web UI",
   "repoName": "fpp-CustomUI",
   "author": "Selden / Black Light Designs",
-  "description": "A mobile-friendly lighting control panel for FPP. Manage scenes, custom colors, schedules, and playlists from any device on your network. Accessible at http://&lt;pi-ip&gt;/CustomUI.",
+  "description": "A mobile-friendly lighting control panel for FPP. Manage scenes, custom colors, schedules, and playlists from any device on your network. Accessible at http://&lt;pi-ip&gt;/CustomUI, or a name you choose per install.",
   "homeURL": "https://github.com/BLDSB/fpp-CustomUI",
   "srcURL": "https://github.com/BLDSB/fpp-CustomUI",
   "bugURL": "https://github.com/BLDSB/fpp-CustomUI/issues",

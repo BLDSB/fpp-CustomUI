@@ -8,3 +8,12 @@ venv/
 .claude/
 .github/agents/
 .github/prompts/
+
+# Uploaded branding (logo/background). These must be *ignored*, not merely
+# untracked: FPP's plugin updater falls back to `git clean -fd` when a pull is
+# blocked, which deletes untracked files but skips ignored ones.
+app/static/uploads/*
+!app/static/uploads/.gitkeep
+
+# Runtime log written by the service
+fpp-ui.log
