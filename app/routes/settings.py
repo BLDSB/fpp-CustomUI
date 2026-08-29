@@ -18,6 +18,9 @@ _ALLOWED_KEYS = {
     "accent_color", "nav_color", "nav_link_color", "text_color",
     "genius_pro_count",
     *{f"genius_pro_url_{i}" for i in range(1, 9)},
+    "alert_enabled", "alert_smtp_host", "alert_smtp_port",
+    "alert_smtp_user", "alert_smtp_pass",
+    "alert_email_from", "alert_email_to", "alert_delay_minutes",
 }
 _URL_RE    = re.compile(r"^https?://", re.IGNORECASE)
 _COLOR_RE  = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -387,3 +390,15 @@ def set_ui_path():
     if error:
         return jsonify({"error": error}), 400
     return jsonify({"ok": True, "url": f"/{name}/"})
+
+
+# ── Alert email ──────────────────────────────────────────────────────────────
+
+@settings_bp.post("/api/alerts/test")
+@login_required
+def test_alert_email():
+    from app.alert_monitor import send_test_email
+    ok, err = send_test_email(current_app._get_current_object())
+    if ok:
+        return jsonify({"ok": True})
+    return jsonify({"error": err}), 502
