@@ -6,6 +6,7 @@ from dotenv import set_key
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from app.auth_utils import login_required
+from app import ui_path as ui_path_mod
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -70,9 +71,18 @@ def setup():
     if request.method == "POST":
         pin     = request.form.get("pin", "")
         confirm = request.form.get("confirm", "")
+        # Optional: name this install, which moves it off the default
+        # /CustomUI path (e.g. /cityname). Blank keeps the current path.
+        new_path = (request.form.get("ui_path") or "").strip()
+
+        # Validated before the PIN is written so a bad name leaves the
+        # controller unprovisioned and re-runnable rather than half-set-up.
+        path_error = ui_path_mod.validate(new_path) if new_path else None
 
         if pin != confirm:
             error = "PINs did not match."
+        elif path_error:
+            error = path_error
         else:
             # Re-checked above, but two visitors can race here — the second loses.
             failure = _persist_pin("ADMIN_PASSWORD_HASH", pin)
@@ -80,10 +90,25 @@ def setup():
                 session.clear()
                 session["logged_in"] = True
                 session["is_master"] = False
+
+                if new_path and new_path != ui_path_mod.current_path():
+                    if ui_path_mod.apply(new_path) is None:
+                        # url_for() would still build links for the OLD prefix
+                        # on this response, so redirect to an explicit path.
+                        return redirect(f"/{new_path}/")
+                    # PIN is set and the session is valid — the old path still
+                    # works, so finish setup there rather than stranding them.
+                    current_app.logger.warning(
+                        "Setup could not move the UI to /%s — staying on /%s.",
+                        new_path, ui_path_mod.current_path(),
+                    )
                 return redirect(url_for("main.index"))
             error = failure[0]
 
-    return render_template("setup.html", error=error)
+    return render_template(
+        "setup.html", error=error, ui_path=ui_path_mod.current_path(),
+        reserved_paths=sorted(ui_path_mod.RESERVED_PATHS),
+    )
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])

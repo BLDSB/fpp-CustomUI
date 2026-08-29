@@ -41,11 +41,18 @@ sleep 2
 
 PI_IP=$(hostname -I | awk '{print $1}')
 
+# Report the path this install is actually served at, not the default.
+UI_PATH="CustomUI"
+if grep -qE '^UI_PATH=' "$ENV_FILE"; then
+    CONFIGURED=$(grep -E '^UI_PATH=' "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -dc 'A-Za-z0-9_-')
+    [ -n "$CONFIGURED" ] && UI_PATH="$CONFIGURED"
+fi
+
 if systemctl is-active --quiet fpp-ui; then
     echo ""
     echo "✓ PIN cleared and service restarted."
     echo ""
-    echo "  Open http://$PI_IP/CustomUI to choose a new PIN."
+    echo "  Open http://$PI_IP/$UI_PATH to choose a new PIN."
     echo ""
 else
     echo "✗ fpp-ui did not come back up. Check: journalctl -u fpp-ui -n 30"

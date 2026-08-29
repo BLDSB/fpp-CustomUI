@@ -134,23 +134,43 @@ rm -f "$TMP_SERVICE"
 echo ""
 
 # ── 6. Apache2 reverse proxy ──────────────────────────────────────────────────
-APACHE_CONF_DEST="/etc/apache2/conf-enabled/99-fpp-ui.conf"
-APACHE_CONF_SRC="$PROJECT_DIR/deploy/99-fpp-ui.conf"
-
-if [ -f "$APACHE_CONF_DEST" ]; then
-    echo "✓ Apache2 proxy config already installed."
-else
-    echo "▶ Installing Apache2 reverse proxy (http://<pi-ip>/CustomUI)..."
-    if sudo cp "$APACHE_CONF_SRC" "$APACHE_CONF_DEST" \
-        && sudo a2enmod proxy proxy_http headers \
-        && sudo service apache2 restart; then
-        echo "✓ Apache2 config installed and reloaded."
-    else
-        echo "  ✗ Could not configure Apache2 (no sudo?). To install manually:"
-        echo "    sudo cp $APACHE_CONF_SRC $APACHE_CONF_DEST"
-        echo "    sudo a2enmod proxy proxy_http headers"
-        echo "    sudo service apache2 restart"
+# The proxy config is a template — fpp-ui-set-path renders it for the path this
+# install is served at (UI_PATH in .env, default CustomUI).
+UI_PATH="CustomUI"
+if [ -f "$PROJECT_DIR/.env" ] && grep -qE '^UI_PATH=' "$PROJECT_DIR/.env"; then
+    EXISTING=$(grep -E '^UI_PATH=' "$PROJECT_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')
+    if printf '%s' "$EXISTING" | grep -qE '^[A-Za-z0-9_-]{1,32}$'; then
+        UI_PATH="$EXISTING"
     fi
+fi
+
+SETPATH_BIN="/usr/local/sbin/fpp-ui-set-path"
+echo "▶ Installing Apache2 reverse proxy (http://<pi-ip>/$UI_PATH)..."
+
+install_proxy() {
+    sudo sed "s|__PLUGIN_DIR__|$PROJECT_DIR|g" \
+        "$PROJECT_DIR/deploy/fpp-ui-set-path.sh" | sudo tee "$SETPATH_BIN" > /dev/null || return 1
+    sudo chown root:root "$SETPATH_BIN" || return 1
+    sudo chmod 755 "$SETPATH_BIN" || return 1
+    sudo a2enmod proxy proxy_http headers > /dev/null 2>&1 || true
+    sudo "$SETPATH_BIN" "$UI_PATH" || return 1
+
+    # Let the web UI change the path later without a password prompt.
+    echo "fpp ALL=(root) NOPASSWD: $SETPATH_BIN" | sudo tee /etc/sudoers.d/fpp-ui-set-path > /dev/null
+    sudo chmod 0440 /etc/sudoers.d/fpp-ui-set-path
+    sudo visudo -cf /etc/sudoers.d/fpp-ui-set-path > /dev/null 2>&1 \
+        || sudo rm -f /etc/sudoers.d/fpp-ui-set-path
+    return 0
+}
+
+if install_proxy; then
+    echo "✓ Apache2 config installed and reloaded."
+else
+    echo "  ✗ Could not configure Apache2 (no sudo?). To install manually:"
+    echo "    sudo sed 's|__PLUGIN_DIR__|$PROJECT_DIR|g' $PROJECT_DIR/deploy/fpp-ui-set-path.sh > $SETPATH_BIN"
+    echo "    sudo chmod 755 $SETPATH_BIN"
+    echo "    sudo a2enmod proxy proxy_http headers"
+    echo "    sudo $SETPATH_BIN $UI_PATH"
 fi
 echo ""
 
@@ -159,7 +179,8 @@ PI_IP=$(hostname -I | awk '{print $1}')
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  Setup complete!                                     ║"
 echo "║                                                      ║"
-echo "║  Open http://$PI_IP/CustomUI in a browser     ║"
+BANNER="  Open http://$PI_IP/$UI_PATH in a browser"
+echo "║$(printf '%-54s' "$BANNER")║"
 echo "║  (Also available at http://$PI_IP:5000)       ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""

@@ -140,7 +140,14 @@ def create_app():
     @app.context_processor
     def inject_site_settings():
         from app.models import AppSetting
+        from app.ui_path import reanchor_upload_url
         settings = {s.key: s.value for s in AppSetting.query.all()}
+        # Uploaded images are stored as absolute URLs, so they carry whichever
+        # URL prefix was live when they were uploaded. Re-anchor them to the
+        # current one, or they 404 after the install is moved to a new path.
+        for key in ("logo_url", "bg_image_url"):
+            if settings.get(key):
+                settings[key] = reanchor_upload_url(settings[key])
         return {"site_settings": settings}
 
     return app

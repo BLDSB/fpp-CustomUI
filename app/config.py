@@ -17,3 +17,7 @@ class Config:
     # Generate with: python -c "import secrets; print(secrets.token_hex(24))"
     INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB upload limit
+    # Public URL path Apache serves this install at (e.g. "cityname" for
+    # http://<pi-ip>/cityname). Apache owns the routing; this is read only so
+    # the UI can show and change it. Written by fpp-ui-set-path.
+    UI_PATH = os.environ.get("UI_PATH", "CustomUI")
