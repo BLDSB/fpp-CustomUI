@@ -217,6 +217,27 @@
         </div>
     </div>
 
+    <!-- Web Address -->
+    <div class="settings-card">
+        <h2>Web Address</h2>
+
+        <div class="form-field">
+            <label for="s-ui-path">URL Path</label>
+            <input type="text" id="s-ui-path" maxlength="32"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                   value="{{ ui_path }}" placeholder="CustomUI">
+            <span class="hint" id="ui-path-hint"></span>
+            <span class="hint">
+                Changing this takes effect immediately and the old address stops working —
+                update any bookmarks, saved shortcuts, or kiosk start pages.
+            </span>
+        </div>
+
+        <div>
+            <button id="btn-save-ui-path" class="btn-save">Change Address</button>
+        </div>
+    </div>
+
     <!-- Colors -->
     <div class="settings-card">
         <h2>Colors</h2>
@@ -785,8 +806,12 @@
         }
     });
 
-    document.getElementById('btn-set-master').addEventListener('click', async () => {
-        const btn     = document.getElementById('btn-set-master');
+    // The master-PIN card only renders for a master session, so this block must
+    // not assume the button exists — an unguarded null here aborts the rest of
+    // the script and silently unbinds every handler below it.
+    const masterBtn = document.getElementById('btn-set-master');
+    if (masterBtn) masterBtn.addEventListener('click', async () => {
+        const btn     = masterBtn;
         const newPin  = document.getElementById('s-master-new').value;
         const confirm = document.getElementById('s-master-confirm').value;
 
@@ -849,5 +874,79 @@
         }
     });
 })();
+
+    // ── Web address ───────────────────────────────────────────────────────────
+    // The path is enforced by Apache, not Flask, so changing it rewrites the
+    // proxy config and reloads Apache. The reload is graceful, so this page's
+    // request completes on the old path before we move the browser.
+    (function () {
+        const field = document.getElementById('s-ui-path');
+        const btn   = document.getElementById('btn-save-ui-path');
+        const hint  = document.getElementById('ui-path-hint');
+        if (!field || !btn) return;
+
+        const CURRENT  = {{ ui_path | tojson }};
+        const NAME_RE  = /^[A-Za-z0-9_-]{1,32}$/;
+        // Rendered from app/ui_path.py so the two never drift.
+        const RESERVED = {{ reserved_paths | tojson }};
+
+        function problem(value) {
+            if (!value) return 'Enter a name for the URL.';
+            if (!NAME_RE.test(value)) {
+                return 'Use 1-32 characters: letters, numbers, hyphen or underscore.';
+            }
+            if (RESERVED.indexOf(value.toLowerCase()) !== -1) {
+                return '"' + value + '" is reserved by FPP — pick a different name.';
+            }
+            return null;
+        }
+
+        function refreshHint() {
+            const value = field.value.trim();
+            const issue = problem(value);
+            hint.textContent = issue
+                ? issue
+                : 'This controller will be at ' + location.origin + '/' + value;
+            hint.style.color = issue ? 'var(--accent)' : '';
+        }
+
+        field.addEventListener('input', refreshHint);
+        refreshHint();
+
+        btn.addEventListener('click', async () => {
+            const value = field.value.trim();
+            const issue = problem(value);
+            if (issue) { showToast(issue, 'error'); return; }
+
+            if (value === CURRENT) {
+                showToast('Already using that address.', 'success');
+                return;
+            }
+            if (!confirm(
+                'Move this controller to ' + location.origin + '/' + value + '?\n\n' +
+                location.origin + '/' + CURRENT + ' will stop working.'
+            )) return;
+
+            btn.disabled = true;
+            try {
+                const res  = await fetch((window.APP_ROOT || '') + '/api/ui-path', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ ui_path: value }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not change the address.');
+
+                showToast('Moved — reopening at /' + value, 'success');
+                // Give Apache's graceful reload a moment to finish recycling.
+                setTimeout(function () {
+                    location.href = data.url + 'settings';
+                }, 1500);
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+                btn.disabled = false;
+            }
+        });
+    })();
 </script>
 {% endblock %}

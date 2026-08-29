@@ -151,7 +151,42 @@
         .key.key-empty { visibility: hidden; pointer-events: none; }
 
         /* Hidden form fields */
-        #pin-input, #confirm-input { display: none; }
+        #pin-input, #confirm-input, #ui-path-input { display: none; }
+
+        /* -- Name step -- */
+        .name-step { display: none; width: 100%; flex-direction: column; gap: 0.6rem; }
+        .name-step.active { display: flex; }
+        .name-field {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid var(--border-dim);
+            border-radius: 7px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 1rem;
+            padding: 0.6rem 0.7rem;
+            text-align: center;
+        }
+        .name-field:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .name-preview {
+            font-size: 0.78rem;
+            color: var(--text-dim);
+            text-align: center;
+            word-break: break-all;
+        }
+        .name-preview b { color: var(--text); font-weight: 600; }
+        .name-actions { display: flex; gap: 6px; }
+        .name-actions .key { flex: 1; height: 42px; font-size: 0.85rem; }
+        .key-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            font-weight: 700;
+        }
+        .key-primary:hover  { background: var(--accent); border-color: var(--accent); filter: brightness(1.1); }
+        .key.key-disabled   { opacity: 0.4; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -192,7 +227,21 @@
             <form method="post" action="{{ url_for('auth.setup') }}" id="setup-form">
                 <input type="password" id="pin-input"     name="pin"     autocomplete="off">
                 <input type="password" id="confirm-input" name="confirm" autocomplete="off">
+                <input type="text"     id="ui-path-input" name="ui_path" autocomplete="off">
             </form>
+
+            <!-- Step 3: optionally move this install off the default URL -->
+            <div class="name-step" id="name-step">
+                <input type="text" class="name-field" id="name-field"
+                       placeholder="{{ ui_path }}" maxlength="32" autocomplete="off"
+                       autocapitalize="off" autocorrect="off" spellcheck="false"
+                       aria-label="Name for this controller's web address">
+                <div class="name-preview" id="name-preview"></div>
+                <div class="name-actions">
+                    <button class="key" id="name-skip" type="button">Skip</button>
+                    <button class="key key-primary" id="name-go" type="button">Finish</button>
+                </div>
+            </div>
 
             <!-- Numpad -->
             <div class="numpad" id="numpad">
@@ -229,6 +278,19 @@
         const confInput = document.getElementById('confirm-input');
         const stepLabel = document.getElementById('step-label');
         const backBtn   = document.getElementById('key-back');
+        const pathInput = document.getElementById('ui-path-input');
+        const nameStep  = document.getElementById('name-step');
+        const nameField = document.getElementById('name-field');
+        const namePrev  = document.getElementById('name-preview');
+        const nameGo    = document.getElementById('name-go');
+        const nameSkip  = document.getElementById('name-skip');
+        const subText   = document.querySelector('.setup-sub');
+        const NAME_RE   = /^[A-Za-z0-9_-]{1,32}$/;
+        // Rendered from app/ui_path.py so the two never drift.
+        const RESERVED  = {{ reserved_paths|tojson }};
+
+        // The numpad is not rendered on the blocked (non-LAN) 403 page.
+        if (!form) return;
 
         function updateDots() {
             dots.forEach((d, i) => d.classList.toggle('filled', i < pin.length));
@@ -270,7 +332,8 @@
             } else if (pin === first) {
                 pinInput.value  = first;
                 confInput.value = pin;
-                form.submit();
+                // Brief pause so the fourth dot registers before the step swaps.
+                setTimeout(showNameStep, 150);
             } else {
                 setTimeout(function () {
                     resetToFirstStep('PINs did not match — choose a 4-digit PIN');
@@ -284,6 +347,64 @@
             updateDots();
         }
 
+        // ── Step 3: name this install (optional) ──
+        // Blank keeps the current path. A name moves the UI to /<name>, which
+        // the server applies before redirecting the browser there.
+        function showNameStep() {
+            step = 3;
+            document.getElementById('pin-dots').style.display = 'none';
+            document.getElementById('numpad').style.display   = 'none';
+            stepLabel.textContent = 'Name this controller';
+            if (subText) {
+                subText.textContent =
+                    'Sets the web address for this install. Leave blank to keep the current one.';
+            }
+            nameStep.classList.add('active');
+            updateNamePreview();
+            nameField.focus();
+        }
+
+        function nameProblem(value) {
+            if (!NAME_RE.test(value)) return 'Letters, numbers, hyphen and underscore only.';
+            if (RESERVED.indexOf(value.toLowerCase()) !== -1) {
+                return '"' + value + '" is reserved by FPP — pick a different name.';
+            }
+            return null;
+        }
+
+        function updateNamePreview() {
+            const value   = nameField.value.trim();
+            const problem = value ? nameProblem(value) : null;
+            if (!value) {
+                namePrev.innerHTML = 'Keeping <b>' + location.origin + '/{{ ui_path }}</b>';
+            } else if (problem) {
+                namePrev.textContent = problem;
+            } else {
+                namePrev.innerHTML = 'Will be at <b>' + location.origin + '/' + value + '</b>';
+            }
+            nameGo.classList.toggle('key-disabled', !!problem);
+        }
+
+        function finishSetup() {
+            const value = nameField.value.trim();
+            if (value && nameProblem(value)) return;
+            pathInput.value = value;
+            nameGo.textContent = 'Working…';
+            nameGo.classList.add('key-disabled');
+            nameSkip.classList.add('key-disabled');
+            form.submit();
+        }
+
+        nameField.addEventListener('input', updateNamePreview);
+        nameGo.addEventListener('click', finishSetup);
+        nameSkip.addEventListener('click', function () {
+            nameField.value = '';
+            finishSetup();
+        });
+        nameField.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); finishSetup(); }
+        });
+
         document.getElementById('numpad').addEventListener('click', function (e) {
             const key = e.target.closest('.key');
             if (!key) return;
@@ -295,6 +416,8 @@
 
         // Physical keyboard support (for desktop / SSH access)
         document.addEventListener('keydown', function (e) {
+            // Once naming, the text field owns the keyboard.
+            if (step === 3) return;
             if (e.key >= '0' && e.key <= '9') pressDigit(e.key);
             if (e.key === 'Backspace') pressBack();
         });

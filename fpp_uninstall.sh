@@ -45,6 +45,16 @@ print('  ✓ FPP VirtualHost CSP patch removed.')
 PYEOF
 fi
 
+# Remove the path helper and its sudoers rule
+if [ -f "/usr/local/sbin/fpp-ui-set-path" ]; then
+    rm -f /usr/local/sbin/fpp-ui-set-path
+    echo "✓ Path helper removed."
+fi
+if [ -f "/etc/sudoers.d/fpp-ui-set-path" ]; then
+    rm -f /etc/sudoers.d/fpp-ui-set-path
+    echo "✓ Sudoers rule removed."
+fi
+
 service apache2 restart
 
 echo ""

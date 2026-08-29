@@ -13,6 +13,7 @@ A mobile-friendly, password-protected control panel for [Falcon Pi Player](https
 - **Settings** — customize site name, colors, background, and zone display names
 - **Password management** — change your login password from the Settings page
 - **Port 80 access** — available at `http://<pi-ip>/CustomUI` alongside the standard FPP UI
+- **Per-deployment URL** — rename the path for each install, e.g. `http://<pi-ip>/cityname`
 
 ---
 
@@ -53,7 +54,7 @@ The setup script will:
 - Generate a `.env` file with random secrets
 - Prompt you to set an admin password
 - Install and start the `fpp-ui` systemd service
-- Configure the Apache reverse proxy at `/CustomUI`
+- Configure the Apache reverse proxy at `/CustomUI` (renameable — see below)
 
 ---
 
@@ -63,6 +64,30 @@ The setup script will:
 |-----|-------|
 | `http://<pi-ip>/CustomUI` | Port 80, alongside the FPP UI (recommended) |
 | `http://<pi-ip>:5000` | Direct Flask port (always available) |
+
+### Changing the URL path
+
+Every install starts at `/CustomUI` and can be renamed per deployment — a city
+project at `http://<pi-ip>/cityname`, a bank at `http://<pi-ip>/bankname`. There
+are three ways to set it:
+
+1. **During first-run setup** — after choosing a PIN, the setup page asks for a
+   name. Leave it blank to stay on `/CustomUI`.
+2. **Settings → Web Address** — change it later from the UI. The browser is
+   moved to the new address automatically.
+3. **Over SSH:**
+   ```bash
+   sudo fpp-ui-set-path cityname
+   ```
+
+Names may use 1–32 letters, numbers, hyphens or underscores. Paths used by FPP
+itself (`api`, `playlist`, `settings`, …) are refused, since mounting over one
+would break the stock FPP interface.
+
+The choice is stored as `UI_PATH` in `.env` and survives `git pull` upgrades.
+Changing the path is immediate and the old address stops working — update any
+bookmarks, saved shortcuts, or kiosk start pages. Port 5000 is unaffected and
+always reachable, which is the way back in if a rename goes wrong.
 
 ---
 
@@ -76,6 +101,7 @@ All settings live in `.env` (created automatically during install). The `.env.ex
 | `ADMIN_PASSWORD_HASH` | Bcrypt hash of the admin password — set during install |
 | `FPP_BASE_URL` | FPP REST API base URL (default: `http://localhost/api`) |
 | `INTERNAL_TOKEN` | Token for internal FPP playlist callbacks — auto-generated |
+| `UI_PATH` | URL path this install is served at (default: `CustomUI`) — see [Changing the URL path](#changing-the-url-path) |
 
 ---
 

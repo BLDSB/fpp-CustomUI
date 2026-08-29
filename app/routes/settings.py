@@ -9,6 +9,7 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from app import db
 from app.auth_utils import login_required
 from app.models import AppSetting, ColorButton, EffectPreset, SavedColor, Scene, SceneZone, Zone, get_all_zones
+from app import ui_path as ui_path_mod
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -30,8 +31,16 @@ def _validate_url(val):
 @login_required
 def settings_page():
     settings = {s.key: s.value for s in AppSetting.query.all()}
+    # Show the working URL for uploads, not one anchored to an old path.
+    for key in ("logo_url", "bg_image_url"):
+        if settings.get(key):
+            settings[key] = ui_path_mod.reanchor_upload_url(settings[key])
     zones = [z.to_dict() for z in get_all_zones() if z.slot != 0]
-    return render_template("settings.html", settings=settings, zones=zones)
+    return render_template(
+        "settings.html", settings=settings, zones=zones,
+        ui_path=ui_path_mod.current_path(),
+        reserved_paths=sorted(ui_path_mod.RESERVED_PATHS),
+    )
 
 
 @settings_bp.post("/api/settings")
@@ -356,3 +365,25 @@ def restore_backup():
 
     db.session.commit()
     return jsonify({"ok": True})
+
+
+# ── Public URL path ───────────────────────────────────────────────────────────
+
+@settings_bp.post("/api/ui-path")
+@login_required
+def set_ui_path():
+    """Move this install to a different URL path (e.g. /cityname).
+
+    Apache is reloaded gracefully, so this response still reaches the browser
+    over the old path; the client then navigates to the returned URL.
+    """
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("ui_path") or "").strip()
+
+    if name == ui_path_mod.current_path():
+        return jsonify({"ok": True, "url": f"/{name}/", "unchanged": True})
+
+    error = ui_path_mod.apply(name)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"ok": True, "url": f"/{name}/"})

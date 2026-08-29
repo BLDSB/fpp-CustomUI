@@ -78,44 +78,55 @@ systemctl restart fpp-ui
 echo "✓ Systemd service installed and started."
 echo ""
 
-# ── 4. Apache2 reverse proxy ──────────────────────────────────────────────────
-APACHE_CONF="/etc/apache2/conf-enabled/99-fpp-ui.conf"
-cp "$PLUGIN_DIR/deploy/99-fpp-ui.conf" "$APACHE_CONF"
-a2enmod proxy proxy_http headers > /dev/null 2>&1 || true
-
-# FPP's Apache injects a restrictive Content-Security-Policy via its VirtualHost
-# config that blocks external images. Inject a <Location> block inside FPP's
-# VirtualHost (the only place that can override it) to replace the CSP with one
-# that allows external img-src. Idempotent — skipped if marker already present.
-VHOST_CONF="/etc/apache2/sites-enabled/000-default.conf"
-MARKER="# BEGIN fpp-CustomUI CSP override"
-if [ -f "$VHOST_CONF" ] && ! grep -qF "$MARKER" "$VHOST_CONF"; then
-    python3 - "$VHOST_CONF" << PYEOF
-import sys, re
-conf = open(sys.argv[1]).read()
-block = '''  $MARKER
-  <Location "/CustomUI/">
-    Header set Content-Security-Policy "default-src 'self'; img-src * data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none';"
-  </Location>
-  # END fpp-CustomUI CSP override'''
-open(sys.argv[1], 'w').write(conf.replace('</VirtualHost>', block + '\n</VirtualHost>', 1))
-print('  ✓ FPP VirtualHost patched for CSP.')
-PYEOF
+# ── 4. URL path for this install ──────────────────────────────────────────────
+# Each deployment can be served at its own path (e.g. /cityname, /bankname).
+# The choice lives in .env so it survives `git pull` upgrades. Fresh installs
+# start at /CustomUI; the path is then set from the first-run setup page, the
+# Settings page, or `sudo fpp-ui-set-path <name>`.
+UI_PATH="CustomUI"
+if [ -f "$PLUGIN_DIR/.env" ] && grep -qE '^UI_PATH=' "$PLUGIN_DIR/.env"; then
+    EXISTING=$(grep -E '^UI_PATH=' "$PLUGIN_DIR/.env" | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')
+    if printf '%s' "$EXISTING" | grep -qE '^[A-Za-z0-9_-]{1,32}$'; then
+        UI_PATH="$EXISTING"
+    else
+        echo "⚠ Ignoring invalid UI_PATH in .env — falling back to /CustomUI."
+    fi
 fi
 
-service apache2 restart
-echo "✓ Apache reverse proxy configured at /CustomUI."
+# ── 5. Apache2 reverse proxy ──────────────────────────────────────────────────
+a2enmod proxy proxy_http headers > /dev/null 2>&1 || true
+
+# Install the path helper as root-owned, outside the plugin directory (which is
+# chowned to fpp below) so that granting fpp sudo on it is not a way to become
+# root by editing it.
+SETPATH_BIN="/usr/local/sbin/fpp-ui-set-path"
+sed "s|__PLUGIN_DIR__|$PLUGIN_DIR|g" "$PLUGIN_DIR/deploy/fpp-ui-set-path.sh" > "$SETPATH_BIN"
+chown root:root "$SETPATH_BIN"
+chmod 755 "$SETPATH_BIN"
+
+# Let the web UI (running as fpp) change the path without a password prompt.
+SUDOERS="/etc/sudoers.d/fpp-ui-set-path"
+echo "fpp ALL=(root) NOPASSWD: $SETPATH_BIN" > "$SUDOERS"
+chmod 0440 "$SUDOERS"
+if ! visudo -cf "$SUDOERS" > /dev/null 2>&1; then
+    rm -f "$SUDOERS"
+    echo "⚠ Could not install sudoers rule — path changes will need SSH."
+fi
+
+# Renders the proxy config, re-scopes the CSP override, and reloads Apache.
+"$SETPATH_BIN" "$UI_PATH"
 echo ""
 
-# ── 5. Fix ownership (venv and new files created as root → hand back to fpp) ──
+# ── 6. Fix ownership (venv and new files created as root → hand back to fpp) ──
 chown -R fpp:fpp "$PLUGIN_DIR"
 echo ""
 
 PI_IP=$(hostname -I | awk '{print $1}')
+BANNER="  Open http://$PI_IP/$UI_PATH in a browser"
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  Installation complete!                              ║"
 echo "║                                                      ║"
-echo "║  Open http://$PI_IP/CustomUI in a browser     ║"
+printf "║%-54s║\n" "$BANNER"
 echo "║  to choose your PIN and finish setup.                ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
