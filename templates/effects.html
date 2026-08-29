@@ -264,6 +264,12 @@
     }
     .preset-delete:hover { color: #c0392b; }
     #presets-empty { font-size: 0.82rem; color: var(--text-dim); }
+    .preset-hint {
+        font-size: 0.78rem;
+        color: var(--text-dim);
+        margin: -0.35rem 0 0.75rem;
+        line-height: 1.4;
+    }
 </style>
 {% endblock %}
 
@@ -323,6 +329,11 @@
 <!-- Saved presets -->
 <div class="effects-card">
     <h2>Saved Presets</h2>
+    <p class="preset-hint">
+        Saving a preset also creates an FPP playlist named
+        <strong>Effect - &lt;preset name&gt;</strong>, so you can start and stop it
+        from the Controls tab or schedule it on the Schedule tab.
+    </p>
     <div class="preset-list" id="preset-list">
         <span id="presets-empty" style="display:none">No presets saved yet.</span>
     </div>
@@ -650,8 +661,8 @@
             const chip = document.createElement('div');
             chip.className = 'preset-chip';
             chip.innerHTML = `
-                <button class="preset-apply" title="Apply preset">&#9654; ${escHtml(p.name)}</button>
-                <button class="preset-delete" title="Delete preset">&#10005;</button>
+                <button class="preset-apply" title="Load preset into the editor (playlist: ${escHtml(p.playlist)})">&#9654; ${escHtml(p.name)}</button>
+                <button class="preset-delete" title="Delete preset and its playlist">&#10005;</button>
             `;
             chip.querySelector('.preset-apply').addEventListener('click', () => applyPreset(p));
             chip.querySelector('.preset-delete').addEventListener('click', async () => {
@@ -696,7 +707,7 @@
                 ? [] : []), preset]);
             // Re-fetch full list to be safe
             apiFetch('/api/effects/presets').then(renderPresets);
-            showToast(`Preset "${name.trim()}" saved`, 'success');
+            showToast(`Preset saved — playlist "${preset.playlist}" created`, 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         }

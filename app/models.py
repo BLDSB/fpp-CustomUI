@@ -101,6 +101,8 @@ class EffectPreset(db.Model):
         return {
             "id": self.id,
             "name": self.name,
+            # FPP playlist auto-created for this preset (see app/routes/effects.py)
+            "playlist": f"Effect - {self.name}",
             "effect_name": self.effect_name,
             "models": json.loads(self.models_json),
             "args": json.loads(self.args_json),

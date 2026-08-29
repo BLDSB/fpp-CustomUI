@@ -59,6 +59,18 @@ def _regenerate_scene_playlists(app):
             app.logger.warning("Could not regenerate scene playlists on startup: %s", exc)
 
 
+def _regenerate_effect_playlists(app):
+    """Rewrite all effect preset playlists to FPP after a restart."""
+    with app.app_context():
+        try:
+            from app.models import EffectPreset
+            from app.routes.effects import _write_effect_playlist
+            for preset in EffectPreset.query.all():
+                _write_effect_playlist(preset)
+        except Exception as exc:
+            app.logger.warning("Could not regenerate effect playlists on startup: %s", exc)
+
+
 def create_app():
     app = Flask(__name__, template_folder="../templates")
 
@@ -71,6 +83,7 @@ def create_app():
         from app import models  # noqa: F401
         db.create_all()
         _regenerate_scene_playlists(app)
+        _regenerate_effect_playlists(app)
         _create_turn_off_lights_preset(app)
 
     from app.routes import main as main_blueprint
