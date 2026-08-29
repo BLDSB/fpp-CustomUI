@@ -222,7 +222,10 @@
     const btnLoop = document.getElementById('btn-loop');
     let currentPlaylist = null;
     let statusPollTimer = null;
-    let activeScene = null;
+    // Scene and Effect playlists are applied directly by Flask (overlay models),
+    // so FPP reports nothing playing while they are active — track them here.
+    let activeOverlay = null;      // playlist name, e.g. "Scene - Warm" / "Effect - Twinkle"
+    let activeOverlayKind = '';    // "Scene" or "Effect"
     let hasSequences = false;
 
     // ── Loop state (persisted in localStorage) ─────────────────────
@@ -301,15 +304,15 @@
 
             if (displayName) {
                 // FPP is playing a real playlist/sequence — it takes precedence.
-                activeScene = null;
+                activeOverlay = null;
                 const pos = (!isTempSeq && s.current_playlist?.position !== undefined)
                     ? ` — entry ${s.current_playlist.position + 1}`
                     : '';
                 statusText.innerHTML = `<span class="label">Status:</span> <span class="playing">Playing</span> <strong>${escHtml(displayName)}</strong>${pos}`;
                 btnStop.disabled = false;
-            } else if (activeScene) {
-                // No FPP playlist running, but we activated a scene via overlays.
-                statusText.innerHTML = `<span class="label">Status:</span> <span class="playing">Scene Active</span> <strong>${escHtml(activeScene)}</strong>`;
+            } else if (activeOverlay) {
+                // No FPP playlist running, but we activated a scene/effect via overlays.
+                statusText.innerHTML = `<span class="label">Status:</span> <span class="playing">${escHtml(activeOverlayKind)} Active</span> <strong>${escHtml(activeOverlay)}</strong>`;
                 btnStop.disabled = false;
             } else {
                 statusText.innerHTML = `<span class="label">Status:</span> ${escHtml(mode)}`;
@@ -319,7 +322,7 @@
             // Highlight active playlist card.
             document.querySelectorAll('.playlist-card[data-name]').forEach(card => {
                 const isActive = (displayName && !isTempSeq && card.dataset.name === currentPlaylist)
-                              || (!displayName && activeScene && card.dataset.name === activeScene);
+                              || (!displayName && activeOverlay && card.dataset.name === activeOverlay);
                 card.classList.toggle('active-playlist', isActive);
             });
             document.querySelectorAll('.playlist-card[data-seqname]').forEach(card => {
@@ -342,11 +345,14 @@
         if (btn) btn.disabled = true;
         try {
             await apiFetch(`/api/playlists/${encodeURIComponent(name)}/play`, 'POST', { repeat: loopEnabled });
-            if (name.startsWith('Scene - ')) {
-                activeScene = name;
-                showToast(`\u25A0 Scene Active: ${name}`, 'success');
+            const overlayKind = name.startsWith('Scene - ') ? 'Scene'
+                              : name.startsWith('Effect - ') ? 'Effect' : '';
+            if (overlayKind) {
+                activeOverlay = name;
+                activeOverlayKind = overlayKind;
+                showToast(`\u25A0 ${overlayKind} Active: ${name}`, 'success');
             } else {
-                activeScene = null;
+                activeOverlay = null;
                 showToast(`${loopEnabled ? '\u21BB Looping' : '\u25B6 Playing'}: ${name}`, 'success');
             }
             await pollStatus();
@@ -362,7 +368,7 @@
         btnStop.disabled = true;
         try {
             await apiFetch('/api/playlists/stop', 'POST');
-            activeScene = null;
+            activeOverlay = null;
             showToast('Stopped', 'success');
             await pollStatus();
         } catch (err) {

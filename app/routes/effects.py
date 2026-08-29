@@ -1,3 +1,4 @@
+import hmac
 import json
 
 import requests
@@ -12,6 +13,95 @@ effects_bp = Blueprint("effects", __name__)
 
 def _fpp(path):
     return f"{current_app.config['FPP_BASE_URL']}{path}"
+
+
+def _playlist_name(preset_name):
+    return f"Effect - {preset_name}"
+
+
+def _send_effect(models, effect, args, multisync, systems):
+    """Push an 'Overlay Model Effect' command to FPP. Returns (ok, error)."""
+    command = {
+        "command": "Overlay Model Effect",
+        "multisyncCommand": multisync,
+        "multisyncHosts": ",".join(systems) if multisync else "",
+        "args": [",".join(models), "Enabled", effect] + [str(a) for a in args],
+    }
+    try:
+        resp = requests.post(_fpp("/command"), json=command, timeout=10)
+        resp.raise_for_status()
+        return True, None
+    except requests.RequestException as exc:
+        current_app.logger.error("FPP run effect error: %s", exc)
+        return False, str(exc)
+
+
+def _run_preset(preset):
+    """Fire the effect stored in a preset."""
+    d = preset.to_dict()
+    return _send_effect(d["models"], d["effect_name"], d["args"], d["multisync"], d["systems"])
+
+
+def _write_effect_playlist(preset):
+    """Register an FPP playlist that runs this preset.
+
+    Mirrors the scene playlist structure in app/routes/scenes.py, which is the
+    shape FPP is known to play correctly: the URL command in mainPlaylist fires
+    the effect through Flask, the 10-second pause keeps FPP's player active
+    (and gives the entry a non-zero duration), and leadOut clears the overlay
+    when the playlist is stopped gracefully — e.g. when the scheduler reaches
+    the entry's endTime with stopType=Graceful.
+    """
+    token = current_app.config.get("INTERNAL_TOKEN", "")
+    apply_url = f"http://localhost:5000/internal/effect/{preset.id}/apply?token={token}"
+
+    def url_cmd(u):
+        return {"type": "command", "enabled": 1, "command": "URL",
+                "args": [u, "GET", ""], "startDelay": 0, "endDelay": 0}
+
+    def overlay_effect(model, state, action):
+        return {"type": "command", "enabled": 1, "command": "Overlay Model Effect",
+                "args": [model, state, action], "startDelay": 0, "endDelay": 0}
+
+    def pause_item(d):
+        return {"type": "pause", "enabled": 1, "duration": d,
+                "startDelay": 0, "endDelay": 0}
+
+    playlist_def = {
+        "name": _playlist_name(preset.name),
+        "version": 4,
+        "repeat": 1,
+        "loopCount": 0,
+        "desc": "FPP UI Effect",
+        "random": 0,
+        "empty": False,
+        "leadIn": [],
+        "mainPlaylist": [
+            url_cmd(apply_url),
+            pause_item(10),
+        ],
+        "leadOut": [
+            pause_item(3),
+            overlay_effect("--All Models--", "Enabled", "Stop Effects"),
+        ],
+    }
+    try:
+        requests.post(
+            _fpp(f"/playlist/{_playlist_name(preset.name)}"),
+            json=playlist_def,
+            timeout=5,
+        )
+    except requests.RequestException as exc:
+        current_app.logger.warning(
+            "Could not register FPP playlist for effect preset %d: %s", preset.id, exc
+        )
+
+
+def _delete_effect_playlist(preset):
+    try:
+        requests.delete(_fpp(f"/playlist/{_playlist_name(preset.name)}"), timeout=5)
+    except requests.RequestException:
+        pass
 
 
 @effects_bp.get("/effects")
@@ -102,19 +192,10 @@ def run_effect():
     if not effect:
         return jsonify({"error": "No effect selected"}), 400
 
-    command = {
-        "command": "Overlay Model Effect",
-        "multisyncCommand": multisync,
-        "multisyncHosts": ",".join(systems) if multisync else "",
-        "args": [",".join(models), "Enabled", effect] + [str(a) for a in args],
-    }
-    try:
-        resp = requests.post(_fpp("/command"), json=command, timeout=10)
-        resp.raise_for_status()
-        return jsonify({"ok": True})
-    except Exception as exc:
-        current_app.logger.error("FPP run effect error: %s", exc)
-        return jsonify({"error": f"Could not run effect: {exc}"}), 502
+    ok, error = _send_effect(models, effect, args, multisync, systems)
+    if not ok:
+        return jsonify({"error": f"Could not run effect: {error}"}), 502
+    return jsonify({"ok": True})
 
 
 @effects_bp.post("/api/effects/stop")
@@ -153,6 +234,12 @@ def save_preset():
     name = str(data.get("name") or "").strip()[:64]
     if not name:
         return jsonify({"error": "Name required"}), 400
+    # The preset name becomes an FPP playlist name, so it has to be unique
+    # and safe to use in a URL path.
+    if any(ch in name for ch in ("/", "\\")) or ".." in name:
+        return jsonify({"error": "Name cannot contain slashes or .."}), 400
+    if EffectPreset.query.filter_by(name=name).first():
+        return jsonify({"error": "A preset with that name already exists"}), 409
 
     preset = EffectPreset(
         name=name,
@@ -164,6 +251,7 @@ def save_preset():
     )
     db.session.add(preset)
     db.session.commit()
+    _write_effect_playlist(preset)
     return jsonify(preset.to_dict()), 201
 
 
@@ -173,6 +261,28 @@ def delete_preset(preset_id):
     preset = db.session.get(EffectPreset, preset_id)
     if not preset:
         return jsonify({"error": "Not found"}), 404
+    _delete_effect_playlist(preset)
     db.session.delete(preset)
     db.session.commit()
+    return jsonify({"ok": True})
+
+
+@effects_bp.get("/internal/effect/<int:preset_id>/apply")
+def internal_apply_effect(preset_id):
+    """Token-authenticated endpoint for FPP playlists to trigger an effect preset."""
+    token = request.args.get("token", "")
+    internal_token = current_app.config.get("INTERNAL_TOKEN", "")
+
+    if not internal_token:
+        return jsonify({"error": "Internal token not configured"}), 503
+    if not hmac.compare_digest(token, internal_token):
+        return jsonify({"error": "Forbidden"}), 403
+
+    preset = db.session.get(EffectPreset, preset_id)
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+
+    ok, error = _run_preset(preset)
+    if not ok:
+        return jsonify({"error": f"Could not run effect: {error}"}), 502
     return jsonify({"ok": True})

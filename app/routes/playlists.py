@@ -20,6 +20,23 @@ def _stop_current():
         pass
 
 
+def _stop_all_effects():
+    """Clear any running pixel overlay effect on every model."""
+    try:
+        requests.post(
+            _fpp("/command"),
+            json={
+                "command": "Overlay Model Effect",
+                "multisyncCommand": False,
+                "multisyncHosts": "",
+                "args": ["--All Models--", "Enabled", "Stop Effects"],
+            },
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
+
+
 def _clear_all_overlays():
     """Deactivate every overlay model so a playlist has full channel control."""
     for model in OVERLAY_MODELS:
@@ -54,12 +71,29 @@ def list_playlists():
 def play_playlist(name):
     """Start a named playlist on FPP.
 
-    Scene playlists (name starts with 'Scene - ') are applied directly by
-    our Flask app rather than via FPP, because FPP skips command-only playlists
-    that have total_duration=0.  Non-scene playlists go to FPP normally.
+    Scene playlists ('Scene - ...') and effect playlists ('Effect - ...') are
+    applied directly by our Flask app rather than via FPP, because FPP skips
+    command-only playlists that have total_duration=0.  Those playlists still
+    exist on FPP so the scheduler can run them; this route is the instant
+    start used by the Controls tab.  Everything else goes to FPP normally.
     """
     if "/" in name or "\\" in name or ".." in name:
         return jsonify({"error": "Invalid playlist name"}), 400
+
+    # Effect playlists: look up the preset in the DB and fire the effect directly.
+    if name.startswith("Effect - "):
+        preset_name = name[len("Effect - "):]
+        from app.models import EffectPreset
+        from app.routes.effects import _run_preset
+        preset = EffectPreset.query.filter_by(name=preset_name).first()
+        if preset:
+            _stop_current()
+            _stop_all_effects()
+            _clear_all_overlays()
+            ok, error = _run_preset(preset)
+            if not ok:
+                return jsonify({"error": f"Could not run effect: {error}"}), 502
+            return jsonify({"ok": True})
 
     # Scene playlists: look up the scene in the DB and apply it directly.
     if name.startswith("Scene - "):
@@ -69,6 +103,8 @@ def play_playlist(name):
         scene = Scene.query.filter_by(name=scene_name).first()
         if scene:
             _stop_current()
+            # Clear any running effect so it does not animate over the scene colors.
+            _stop_all_effects()
             ok, errors = _apply_scene(scene)
             if not ok:
                 return jsonify({"error": f"Failed zones: {', '.join(errors)}"}), 502
@@ -93,8 +129,9 @@ def play_playlist(name):
 @playlists_bp.post("/api/playlists/stop")
 @login_required
 def stop_playback():
-    """Stop FPP playback and deactivate all overlay models."""
+    """Stop FPP playback, clear running effects, and deactivate all overlay models."""
     _stop_current()
+    _stop_all_effects()
     _clear_all_overlays()
     return jsonify({"ok": True})
 
