@@ -109,11 +109,12 @@ if [ -f "$ENV_FILE" ]; then
         printf '\n# Public URL path for this install (see fpp-ui-set-path).\nUI_PATH=%s\n' "$NAME" >> "$ENV_FILE"
     fi
     chown fpp:fpp "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
 fi
 
 # ── 5. Graceful reload — finishes in-flight requests, including the one that
 #      may have triggered this change from the web UI.
 systemctl reload apache2 2>/dev/null || service apache2 reload
 
-PI_IP=$(hostname -I | awk '{print $1}')
-echo "✓ Custom UI is now at http://$PI_IP/$NAME"
+PI_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+echo "✓ Custom UI is now at http://${PI_IP:-<pi-ip>}/$NAME"

@@ -61,6 +61,8 @@ else
 
     echo "✓ .env created with generated SECRET_KEY and INTERNAL_TOKEN."
 fi
+# .env holds secrets — keep it owner-only.
+chmod 600 "$PROJECT_DIR/.env"
 echo ""
 
 # ── 3. Admin password ─────────────────────────────────────────────────────────

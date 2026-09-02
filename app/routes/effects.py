@@ -1,5 +1,6 @@
 import hmac
 import json
+from urllib.parse import quote
 
 import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -17,6 +18,16 @@ def _fpp(path):
 
 def _playlist_name(preset_name):
     return f"Effect - {preset_name}"
+
+
+def _str_list(value):
+    """Coerce a JSON payload field to a list of non-empty strings, or None if
+    it isn't list-shaped at all (so callers can reject it)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    return [str(v) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
 
 
 def _send_effect(models, effect, args, multisync, systems):
@@ -90,7 +101,7 @@ def _write_effect_playlist(preset):
             _fpp(f"/playlist/{_playlist_name(preset.name)}"),
             json=playlist_def,
             timeout=5,
-        )
+        ).raise_for_status()
     except requests.RequestException as exc:
         current_app.logger.warning(
             "Could not register FPP playlist for effect preset %d: %s", preset.id, exc
@@ -119,12 +130,19 @@ def list_effects():
         resp.raise_for_status()
         effects = resp.json()
     except Exception as exc:
+        current_app.logger.error("FPP list effects error: %s", exc)
         return jsonify({"error": str(exc)}), 502
+
+    if not isinstance(effects, list):
+        current_app.logger.warning("FPP /overlays/effects returned non-list payload")
+        effects = []
 
     MUSIC_NOTE_CHARS = set("♩♪♫♬")
 
     builtin, wled = [], []
     for e in effects:
+        if not isinstance(e, str):
+            continue
         if e == "Stop Effects":
             continue
         if any(c in e for c in MUSIC_NOTE_CHARS):
@@ -140,11 +158,17 @@ def list_effects():
 @effects_bp.get("/api/effects/args/<path:effect_name>")
 @login_required
 def get_effect_args(effect_name):
+    # <path:> lets slashes through — don't forward traversal-shaped names to FPP.
+    if "/" in effect_name or "\\" in effect_name or ".." in effect_name:
+        return jsonify({"error": "Invalid effect name"}), 400
     try:
-        resp = requests.get(_fpp(f"/overlays/effects/{effect_name}"), timeout=10)
+        resp = requests.get(
+            _fpp(f"/overlays/effects/{quote(effect_name, safe='')}"), timeout=10
+        )
         resp.raise_for_status()
         return jsonify(resp.json())
     except Exception as exc:
+        current_app.logger.error("FPP effect args error for %r: %s", effect_name, exc)
         return jsonify({"error": str(exc)}), 502
 
 
@@ -181,12 +205,14 @@ def get_systems():
 @login_required
 def run_effect():
     data = request.get_json(silent=True) or {}
-    models    = data.get("models", [])
+    models    = _str_list(data.get("models"))
     effect    = str(data.get("effect", "")).strip()
     args      = data.get("args", [])
     multisync = bool(data.get("multisync", False))
-    systems   = data.get("systems", [])
+    systems   = _str_list(data.get("systems")) or []
 
+    if not isinstance(args, list):
+        return jsonify({"error": "args must be a list"}), 400
     if not models:
         return jsonify({"error": "No zones selected"}), 400
     if not effect:
@@ -202,9 +228,9 @@ def run_effect():
 @login_required
 def stop_effect():
     data      = request.get_json(silent=True) or {}
-    models    = data.get("models", [])
+    models    = _str_list(data.get("models")) or []
     multisync = bool(data.get("multisync", False))
-    systems   = data.get("systems", [])
+    systems   = _str_list(data.get("systems")) or []
 
     model_str = ",".join(models) if models else "All"
     command = {
@@ -241,13 +267,19 @@ def save_preset():
     if EffectPreset.query.filter_by(name=name).first():
         return jsonify({"error": "A preset with that name already exists"}), 409
 
+    models  = _str_list(data.get("models"))
+    systems = _str_list(data.get("systems"))
+    args    = data.get("args", [])
+    if models is None or systems is None or not isinstance(args, list):
+        return jsonify({"error": "models, args and systems must be lists"}), 400
+
     preset = EffectPreset(
         name=name,
         effect_name=str(data.get("effect_name", ""))[:128],
-        models_json=json.dumps(data.get("models", [])),
-        args_json=json.dumps(data.get("args", [])),
+        models_json=json.dumps(models),
+        args_json=json.dumps(args),
         multisync=bool(data.get("multisync", False)),
-        systems_json=json.dumps(data.get("systems", [])),
+        systems_json=json.dumps(systems),
     )
     db.session.add(preset)
     db.session.commit()

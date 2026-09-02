@@ -13,14 +13,21 @@
 Description=FPP Custom Web UI (Flask)
 After=network.target fpp.service
 Wants=network.target
+# Field units must never give up on restarting the UI, no matter how many
+# times it fails in a row.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=fpp
 WorkingDirectory=/home/fpp/fpp-ui
-EnvironmentFile=/home/fpp/fpp-ui/.env
+# "-" prefix: a missing .env must not prevent startup — the app generates
+# ephemeral secrets and serves the first-run setup page instead.
+EnvironmentFile=-/home/fpp/fpp-ui/.env
 ExecStart=/home/fpp/fpp-ui/venv/bin/python run.py
-Restart=on-failure
+# "always" (not on-failure): even a clean-exit bug must not leave a remote
+# unit without its UI.
+Restart=always
 RestartSec=5
 StandardOutput=append:/home/fpp/fpp-ui/fpp-ui.log
 StandardError=append:/home/fpp/fpp-ui/fpp-ui.log

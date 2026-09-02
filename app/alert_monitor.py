@@ -31,6 +31,20 @@ def _fpp(app, path):
     return f"{app.config['FPP_BASE_URL']}{path}"
 
 
+def _to_int(value, default, lo=None, hi=None):
+    """Parse an int from a settings value; fall back to default on garbage
+    or out-of-range input so one bad DB value can't break the monitor."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and n < lo:
+        return default
+    if hi is not None and n > hi:
+        return default
+    return n
+
+
 def _load_settings(app):
     with app.app_context():
         from app.models import AppSetting
@@ -51,7 +65,7 @@ def _entry_active_today(entry, today: date) -> bool:
         pass
 
     # Day-of-week bitmask
-    day_mask = int(entry.get("day") or 0)
+    day_mask = _to_int(entry.get("day"), 0)
     dow_bit  = _DOW_BITS.get(today.weekday(), 0)
     return bool(day_mask & dow_bit)
 
@@ -62,9 +76,13 @@ def _parse_hms(s: str):
         return None
     try:
         parts = s.split(":")
-        return int(parts[0]), int(parts[1]), int(parts[2])
+        h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
     except (ValueError, IndexError):
         return None
+    # Range-check so a malformed entry can't blow up datetime() later.
+    if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
+        return None
+    return h, m, sec
 
 
 def _process_schedule(app):
@@ -75,7 +93,7 @@ def _process_schedule(app):
             _pending.clear()
         return
 
-    delay_min = max(1, int(settings.get("alert_delay_minutes") or 5))
+    delay_min = _to_int(settings.get("alert_delay_minutes"), 5, lo=1, hi=1440)
 
     try:
         resp = requests.get(_fpp(app, "/schedule"), timeout=5)
@@ -144,7 +162,7 @@ def _verify_and_alert(app, expected_playlist: str, settings: dict):
 
 def _send_email(settings: dict, playlist_name: str):
     host     = (settings.get("alert_smtp_host") or "").strip()
-    port     = int(settings.get("alert_smtp_port") or 587)
+    port     = _to_int(settings.get("alert_smtp_port"), 587, lo=1, hi=65535)
     user     = (settings.get("alert_smtp_user") or "").strip()
     password = (settings.get("alert_smtp_pass") or "").strip()
     from_addr = (settings.get("alert_email_from") or user).strip()
@@ -167,22 +185,34 @@ def _send_email(settings: dict, playlist_name: str):
     msg["From"]    = from_addr
     msg["To"]      = to_addr
 
-    try:
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.login(user, password)
-            smtp.sendmail(from_addr, [to_addr], msg.as_string())
-        _logger.info("Alert monitor: sent alert to %s", to_addr)
-    except Exception as exc:
-        _logger.error("Alert monitor: failed to send email: %s", exc)
+    # A schedule alert is one-shot — if this attempt is lost, no one is told
+    # the show is dark. Retry a couple of times to ride out transient network
+    # blips before giving up.
+    last_error = None
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(host, port, timeout=15) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.login(user, password)
+                smtp.sendmail(from_addr, [to_addr], msg.as_string())
+            _logger.info("Alert monitor: sent alert to %s", to_addr)
+            return
+        except Exception as exc:
+            last_error = exc
+            _logger.warning("Alert monitor: email attempt %d/3 failed: %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(10)
+    _logger.error(
+        "Alert monitor: giving up on alert for '%s': %s", playlist_name, last_error
+    )
 
 
 def send_test_email(app) -> tuple[bool, str]:
     """Called from the settings API to send a test message. Returns (ok, error_msg)."""
     settings = _load_settings(app)
     host     = (settings.get("alert_smtp_host") or "").strip()
-    port     = int(settings.get("alert_smtp_port") or 587)
+    port     = _to_int(settings.get("alert_smtp_port"), 587, lo=1, hi=65535)
     user     = (settings.get("alert_smtp_user") or "").strip()
     password = (settings.get("alert_smtp_pass") or "").strip()
     from_addr = (settings.get("alert_email_from") or user).strip()

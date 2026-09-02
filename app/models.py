@@ -1,6 +1,18 @@
 import json
+import logging
 
 from app import db
+
+_logger = logging.getLogger(__name__)
+
+
+def _loads_list(raw):
+    """Parse a JSON list column, returning [] on corrupt or non-list data."""
+    try:
+        val = json.loads(raw or "[]")
+    except (ValueError, TypeError):
+        return []
+    return val if isinstance(val, list) else []
 
 OVERLAY_MODELS = {"All"} | {f"Zone {i}" for i in range(1, 16)}
 
@@ -104,10 +116,10 @@ class EffectPreset(db.Model):
             # FPP playlist auto-created for this preset (see app/routes/effects.py)
             "playlist": f"Effect - {self.name}",
             "effect_name": self.effect_name,
-            "models": json.loads(self.models_json),
-            "args": json.loads(self.args_json),
+            "models": _loads_list(self.models_json),
+            "args": _loads_list(self.args_json),
             "multisync": self.multisync,
-            "systems": json.loads(self.systems_json),
+            "systems": _loads_list(self.systems_json),
         }
 
 
@@ -126,5 +138,21 @@ def get_all_zones():
         else:
             zones.append(existing[slot])
     if needs_commit:
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception as exc:
+            # Two request threads can race to seed the same slots (PK collision),
+            # or the DB may be momentarily unwritable. Roll back and serve
+            # whatever is queryable; missing slots get transient defaults so the
+            # page still renders.
+            db.session.rollback()
+            _logger.warning("Zone seed commit failed (likely concurrent seed): %s", exc)
+            existing = {z.slot: z for z in Zone.query.all()}
+            zones = []
+            for slot in range(16):
+                z = existing.get(slot)
+                if z is None:
+                    name = "All" if slot == 0 else f"Zone {slot}"
+                    z = Zone(slot=slot, display_name=name, hidden=False)
+                zones.append(z)
     return zones

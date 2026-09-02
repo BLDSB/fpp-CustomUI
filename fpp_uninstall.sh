@@ -54,8 +54,15 @@ if [ -f "/etc/sudoers.d/fpp-ui-set-path" ]; then
     rm -f /etc/sudoers.d/fpp-ui-set-path
     echo "✓ Sudoers rule removed."
 fi
+if [ -f "/etc/logrotate.d/fpp-ui" ]; then
+    rm -f /etc/logrotate.d/fpp-ui
+    echo "✓ Log rotation config removed."
+fi
 
-service apache2 restart
+# Graceful reload is enough to drop our config, and a failure here must not
+# abort the uninstall (set -e) — FPP still removes the plugin directory next.
+systemctl reload apache2 2>/dev/null || service apache2 reload || \
+    echo "⚠ Could not reload Apache — reload it manually: sudo systemctl reload apache2"
 
 echo ""
 echo "Uninstall complete. FPP will now remove the plugin directory."

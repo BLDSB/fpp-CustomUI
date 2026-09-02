@@ -27,6 +27,12 @@ else
     echo "✓ Virtual environment already exists — upgrading dependencies."
 fi
 
+# FPP runs this script as root but leaves HOME=/home/fpp, so pip finds a cache
+# directory owned by fpp, warns, and disables caching. Point it at a root-owned
+# cache outside the plugin dir (which is chowned to fpp at step 6) instead.
+export PIP_CACHE_DIR=/var/cache/fpp-ui-pip
+mkdir -p "$PIP_CACHE_DIR" 2>/dev/null || true   # cache is an optimisation, never fatal
+
 echo "▶ Installing / upgrading Python dependencies..."
 "$PLUGIN_DIR/venv/bin/pip" install --quiet --upgrade pip
 "$PLUGIN_DIR/venv/bin/pip" install --quiet -r "$PLUGIN_DIR/requirements.txt"
@@ -63,9 +69,14 @@ PYEOF
 else
     echo "✓ .env already exists — keeping existing settings."
 fi
+# .env holds the session secret and internal token — keep it owner-only.
+chmod 600 "$PLUGIN_DIR/.env"
 echo ""
 
 # ── 3. Systemd service ────────────────────────────────────────────────────────
+# Installed and enabled here; restarted at the END of this script, after file
+# ownership is handed back to fpp — restarting first would race the chown and
+# a restart failure would abort the rest of the install half-done.
 SERVICE_DEST="/etc/systemd/system/fpp-ui.service"
 TMP_SERVICE=$(mktemp)
 sed "s|/home/fpp/fpp-ui|$PLUGIN_DIR|g" "$PLUGIN_DIR/deploy/fpp-ui.service" > "$TMP_SERVICE"
@@ -74,8 +85,16 @@ cp "$TMP_SERVICE" "$SERVICE_DEST"
 rm -f "$TMP_SERVICE"
 systemctl daemon-reload
 systemctl enable fpp-ui
-systemctl restart fpp-ui
-echo "✓ Systemd service installed and started."
+echo "✓ Systemd service installed."
+
+# Rotate fpp-ui.log so it can never fill the SD card on a long-running unit.
+if [ -d /etc/logrotate.d ]; then
+    sed "s|/home/fpp/fpp-ui|$PLUGIN_DIR|g" "$PLUGIN_DIR/deploy/fpp-ui.logrotate" \
+        > /etc/logrotate.d/fpp-ui
+    echo "✓ Log rotation installed."
+else
+    echo "⚠ /etc/logrotate.d not found — fpp-ui.log will grow unbounded."
+fi
 echo ""
 
 # ── 4. URL path for this install ──────────────────────────────────────────────
@@ -121,7 +140,18 @@ echo ""
 chown -R fpp:fpp "$PLUGIN_DIR"
 echo ""
 
-PI_IP=$(hostname -I | awk '{print $1}')
+# ── 7. Start (or restart) the service now that files/ownership are final ─────
+if systemctl restart fpp-ui; then
+    echo "✓ fpp-ui service started."
+else
+    echo "⚠ fpp-ui did not start — check: journalctl -u fpp-ui -n 30"
+    echo "  (Install finished; the service will retry after: systemctl restart fpp-ui)"
+fi
+echo ""
+
+# Network may not be up yet on a fresh boot — never let the banner kill the install.
+PI_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+PI_IP="${PI_IP:-<pi-ip>}"
 BANNER="  Open http://$PI_IP/$UI_PATH in a browser"
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  Installation complete!                              ║"

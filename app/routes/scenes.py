@@ -74,7 +74,7 @@ def _write_scene_files(scene):
             _fpp(f"/playlist/{_playlist_name(scene.name)}"),
             json=playlist_def,
             timeout=5,
-        )
+        ).raise_for_status()
     except requests.RequestException as exc:
         current_app.logger.warning("Could not register FPP playlist for scene %d: %s", scene.id, exc)
 
@@ -90,7 +90,17 @@ def _set_scene_colors(scene):
     """Enable overlay models and fill colors for each zone. Does not stop playback."""
     errors = []
     for zone in scene.zones:
-        r, g, b = _hex_to_rgb(zone.hex_color)
+        try:
+            r, g, b = _hex_to_rgb(zone.hex_color)
+        except (ValueError, IndexError, TypeError):
+            # Corrupt stored color (e.g. bad restore) — skip this zone rather
+            # than aborting the whole scene with a 500.
+            current_app.logger.error(
+                "Scene %d has invalid color %r for %s — skipping zone",
+                scene.id, zone.hex_color, zone.fpp_model,
+            )
+            errors.append(zone.fpp_model)
+            continue
         try:
             requests.put(
                 _fpp(f"/overlays/model/{zone.fpp_model}/state"),
@@ -148,12 +158,18 @@ def create_scene():
     db.session.add(scene)
     db.session.flush()
 
+    valid_zones = 0
     for fpp_model, hex_color in zones.items():
         if fpp_model not in OVERLAY_MODELS:
             continue
         if not _HEX_RE.match(str(hex_color)):
             continue
         db.session.add(SceneZone(scene_id=scene.id, fpp_model=fpp_model, hex_color=hex_color))
+        valid_zones += 1
+
+    if valid_zones == 0:
+        db.session.rollback()
+        return jsonify({"error": "No valid zone colors provided"}), 400
 
     db.session.commit()
     _write_scene_files(scene)
