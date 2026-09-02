@@ -1,5 +1,8 @@
 import ipaddress
 import os
+import shutil
+import threading
+import time
 
 import bcrypt
 from dotenv import set_key
@@ -9,6 +12,58 @@ from app.auth_utils import login_required
 from app import ui_path as ui_path_mod
 
 auth_bp = Blueprint("auth", __name__)
+
+# ── Login throttling ─────────────────────────────────────────────────────────
+# The PIN space is only 10^4, so unthrottled guessing from the LAN would fall
+# in minutes. Track failures per client IP with an escalating lockout.
+_throttle_lock = threading.Lock()
+_failed_logins: dict[str, list] = {}  # ip -> [fail_count, locked_until_monotonic]
+_FREE_ATTEMPTS = 5
+_LOCKOUT_BASE = 30       # seconds; doubles per failure past the free attempts
+_LOCKOUT_MAX = 900
+
+
+def _throttle_wait(ip):
+    """Seconds the client must still wait, or 0 if allowed to try."""
+    with _throttle_lock:
+        entry = _failed_logins.get(ip)
+        if not entry:
+            return 0
+        remaining = entry[1] - time.monotonic()
+        return max(0, int(remaining))
+
+
+def _record_login_failure(ip):
+    with _throttle_lock:
+        # Opportunistically prune expired entries so the dict stays bounded.
+        if len(_failed_logins) > 100:
+            now = time.monotonic()
+            for k in [k for k, v in _failed_logins.items() if v[1] < now - 3600]:
+                del _failed_logins[k]
+        entry = _failed_logins.setdefault(ip, [0, 0.0])
+        entry[0] += 1
+        if entry[0] > _FREE_ATTEMPTS:
+            lockout = min(_LOCKOUT_BASE * (2 ** (entry[0] - _FREE_ATTEMPTS - 1)), _LOCKOUT_MAX)
+            entry[1] = time.monotonic() + lockout
+
+
+def _clear_login_failures(ip):
+    with _throttle_lock:
+        _failed_logins.pop(ip, None)
+
+
+def _check_pin(candidate, stored_hash):
+    """bcrypt check that treats a corrupt stored hash as a non-match instead
+    of a 500 — a mangled .env must not make login crash."""
+    if not stored_hash:
+        return False
+    try:
+        return bcrypt.checkpw(candidate.encode("utf-8"), stored_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        current_app.logger.error(
+            "Stored PIN hash is malformed — run fpp_reset_pin.sh to re-provision."
+        )
+        return False
 
 
 def is_unprovisioned():
@@ -48,14 +103,33 @@ def _persist_pin(config_key, new_pin, label="PIN"):
     new_hash = bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
 
     env_path = os.path.normpath(os.path.join(current_app.root_path, "..", ".env"))
+    # Atomic update: edit a copy, then rename over the original, so a crash or
+    # full disk mid-write can't leave a truncated .env (which would wipe every
+    # secret on the box). Serialized so two concurrent PIN writes can't
+    # interleave.
+    tmp_path = env_path + ".tmp"
     try:
-        set_key(env_path, config_key, new_hash, quote_mode="never")
+        with _env_write_lock:
+            if os.path.exists(env_path):
+                shutil.copy2(env_path, tmp_path)
+            else:
+                open(tmp_path, "w").close()
+            set_key(tmp_path, config_key, new_hash, quote_mode="never")
+            os.chmod(tmp_path, 0o600)  # .env holds secrets — owner-only
+            os.replace(tmp_path, env_path)
     except Exception as exc:
         current_app.logger.warning("Could not persist %s to .env: %s", config_key, exc)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
         return ("Could not save PIN — is the .env file writable?", 500)
 
     current_app.config[config_key] = new_hash
     return None
+
+
+_env_write_lock = threading.Lock()
 
 
 @auth_bp.route("/setup", methods=["GET", "POST"])
@@ -115,20 +189,31 @@ def setup():
 def login():
     error = None
     if request.method == "POST":
+        client_ip = request.remote_addr or "unknown"
+        wait = _throttle_wait(client_ip)
+        if wait:
+            current_app.logger.warning(
+                "Login throttled for %s — %ds remaining", client_ip, wait
+            )
+            error = f"Too many attempts. Try again in {wait} seconds."
+            return render_template("login.html", error=error), 429
+
         password = request.form.get("password", "")
         stored_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
-
         master_hash = current_app.config.get("MASTER_PIN_HASH", "")
 
-        admin_ok = stored_hash and bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
-        master_ok = master_hash and bcrypt.checkpw(password.encode("utf-8"), master_hash.encode("utf-8"))
+        admin_ok = _check_pin(password, stored_hash)
+        master_ok = _check_pin(password, master_hash)
 
         if admin_ok or master_ok:
+            _clear_login_failures(client_ip)
             session.clear()
             session["logged_in"] = True
             session["is_master"] = bool(master_ok)
             return redirect(url_for("main.index"))
 
+        _record_login_failure(client_ip)
+        current_app.logger.warning("Failed login attempt from %s", client_ip)
         error = "Invalid PIN."
 
     return render_template("login.html", error=error)
@@ -148,9 +233,7 @@ def change_pin():
     new_pin    = str(data.get("new_pin", "")).strip()
 
     stored_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
-    if not stored_hash or not bcrypt.checkpw(
-        current_pw.encode("utf-8"), stored_hash.encode("utf-8")
-    ):
+    if not _check_pin(str(current_pw), stored_hash):
         return jsonify({"error": "Current PIN is incorrect."}), 400
 
     failure = _persist_pin("ADMIN_PASSWORD_HASH", new_pin, label="New PIN")

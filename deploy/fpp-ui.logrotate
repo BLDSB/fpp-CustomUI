@@ -1,0 +1,17 @@
+# Logrotate policy for the FPP Custom Web UI log.
+#
+# This file is a TEMPLATE — fpp_install.sh substitutes the plugin directory
+# and installs it to /etc/logrotate.d/fpp-ui. Without rotation the append-only
+# fpp-ui.log grows until it fills the Pi's SD card.
+/home/fpp/fpp-ui/fpp-ui.log {
+    weekly
+    rotate 4
+    size 5M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    # The service keeps the log fd open (systemd append redirection), so
+    # truncate in place instead of moving the file out from under it.
+    copytruncate
+}

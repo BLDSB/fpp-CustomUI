@@ -60,6 +60,7 @@ def list_playlists():
         data = resp.json()
         # FPP may return a bare list or {"playlists": [...]}
         playlists = data if isinstance(data, list) else data.get("playlists", [])
+        playlists = [p for p in playlists if isinstance(p, str)]
         return jsonify({"playlists": sorted(playlists)})
     except requests.RequestException as exc:
         current_app.logger.error("FPP list playlists error: %s", exc)
@@ -145,6 +146,7 @@ def list_sequences():
         resp.raise_for_status()
         data = resp.json()
         sequences = data if isinstance(data, list) else []
+        sequences = [s for s in sequences if isinstance(s, str)]
         return jsonify({"sequences": sorted(sequences)})
     except requests.RequestException as exc:
         current_app.logger.error("FPP list sequences error: %s", exc)

@@ -3,12 +3,16 @@ import glob
 import json
 import os
 import re
+import subprocess
 
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from app import db
 from app.auth_utils import login_required
-from app.models import AppSetting, ColorButton, EffectPreset, SavedColor, Scene, SceneZone, Zone, get_all_zones
+from app.models import (
+    OVERLAY_MODELS, AppSetting, ColorButton, EffectPreset, SavedColor, Scene,
+    SceneZone, Zone, get_all_zones,
+)
 from app import ui_path as ui_path_mod
 
 settings_bp = Blueprint("settings", __name__)
@@ -73,6 +77,23 @@ def save_settings():
             if not _COLOR_RE.match(value):
                 return jsonify({"error": f"Invalid color for '{key}' — must be a 6-digit hex color like #e94560"}), 400
 
+        # Numeric settings feed the alert monitor thread — reject garbage here
+        # so a typo can't silently break alerting every poll cycle.
+        if key in ("alert_smtp_port", "alert_delay_minutes", "genius_pro_count") and value:
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                return jsonify({"error": f"'{key}' must be a number"}), 400
+            if key == "alert_smtp_port" and not 1 <= n <= 65535:
+                return jsonify({"error": "SMTP port must be 1–65535"}), 400
+            if key == "alert_delay_minutes" and not 1 <= n <= 1440:
+                return jsonify({"error": "Alert delay must be 1–1440 minutes"}), 400
+            if key == "genius_pro_count" and not 0 <= n <= 8:
+                return jsonify({"error": "Controller count must be 0–8"}), 400
+
+        if key.startswith("genius_pro_url_") and value and not _URL_RE.match(value):
+            return jsonify({"error": f"'{key}' must start with http:// or https://"}), 400
+
         setting = db.session.get(AppSetting, key)
         if setting is None:
             db.session.add(AppSetting(key=key, value=value))
@@ -103,14 +124,16 @@ def upload_image():
         return jsonify({"error": f"Unsupported file type. Use: {', '.join(sorted(_ALLOWED_IMAGE_EXTS))}"}), 400
 
     upload_dir = os.path.join(current_app.static_folder, "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-
-    # Remove any previous upload for this slot (different extension)
-    for old in glob.glob(os.path.join(upload_dir, f"{image_type}.*")):
-        os.remove(old)
-
     filename = f"{image_type}{ext}"
-    file.save(os.path.join(upload_dir, filename))
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        # Remove any previous upload for this slot (different extension)
+        for old in glob.glob(os.path.join(upload_dir, f"{image_type}.*")):
+            os.remove(old)
+        file.save(os.path.join(upload_dir, filename))
+    except OSError as exc:
+        current_app.logger.error("Image upload failed: %s", exc)
+        return jsonify({"error": "Could not save image — disk full or uploads folder not writable?"}), 500
 
     return jsonify({"url": url_for("static", filename=f"uploads/{filename}")})
 
@@ -172,7 +195,10 @@ def create_overlay_models():
                 existing = json.load(f)
         else:
             existing = {"models": [], "autoCreate": True}
-    except Exception:
+    except Exception as exc:
+        current_app.logger.warning(
+            "model-overlays.json unreadable (%s) — rebuilding zone models from scratch", exc
+        )
         existing = {"models": [], "autoCreate": True}
 
     # Keep any non-Zone-1-15 models; replace Zone entries with fresh stubs
@@ -194,18 +220,28 @@ def create_overlay_models():
     ]
     existing["models"] = kept + new_zones
 
+    # Atomic write so a crash mid-write can't corrupt FPP's own model config.
+    tmp_path = config_path + ".tmp"
     try:
-        with open(config_path, "w") as f:
+        with open(tmp_path, "w") as f:
             json.dump(existing, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, config_path)
     except Exception as exc:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        current_app.logger.error("Could not write model-overlays.json: %s", exc)
         return jsonify({"error": f"Could not write config: {exc}"}), 500
 
     # fppd must restart to pick up the new model-overlays.json
-    import subprocess
     try:
         subprocess.run(["sudo", "systemctl", "restart", "fppd"], timeout=15, check=True)
     except Exception as exc:
         current_app.logger.warning("Could not restart fppd: %s", exc)
+        return jsonify({"ok": True, "warning": "Models written, but fppd did not restart — restart FPP manually."})
 
     return jsonify({"ok": True})
 
@@ -227,6 +263,8 @@ def genius_reboot():
     base_url = (setting.value or "").rstrip("/") if setting else ""
     if not base_url:
         return jsonify({"error": f"Controller {idx} URL is not configured in Settings"}), 400
+    if not _URL_RE.match(base_url):
+        return jsonify({"error": f"Controller {idx} URL must start with http:// or https://"}), 400
     try:
         resp = req.get(f"{base_url}/api/reboot", timeout=8)
         data = resp.json()
@@ -287,6 +325,8 @@ def restore_backup():
     for key, value in (data.get("settings") or {}).items():
         if key not in _ALLOWED_KEYS:
             continue
+        if value is not None:
+            value = str(value)
         s = db.session.get(AppSetting, key)
         if s:
             s.value = value
@@ -315,7 +355,13 @@ def restore_backup():
 
     color_id_map = {}
     for c in (data.get("saved_colors") or []):
-        nc = SavedColor(name=str(c.get("name", ""))[:64], hex_value=str(c.get("hex_value", "#000000")))
+        if not isinstance(c, dict):
+            continue
+        hex_value = str(c.get("hex_value", ""))
+        if not _COLOR_RE.match(hex_value):
+            current_app.logger.warning("Restore: skipping color with invalid hex %r", hex_value)
+            continue
+        nc = SavedColor(name=str(c.get("name", ""))[:64], hex_value=hex_value)
         db.session.add(nc)
         db.session.flush()
         color_id_map[c.get("id")] = nc.id
@@ -330,18 +376,36 @@ def restore_backup():
     db.session.flush()
 
     from app.routes.scenes import _write_scene_files
+    seen_scene_names = set()
     for s in (data.get("scenes") or []):
-        name = str(s.get("name", "")).strip()[:64]
-        if not name:
+        if not isinstance(s, dict):
             continue
+        name = str(s.get("name", "")).strip()[:64]
+        # Scene.name is unique — a duplicate in a hand-edited backup would
+        # otherwise abort the whole restore at commit time.
+        if not name or name in seen_scene_names:
+            continue
+        seen_scene_names.add(name)
         new_scene = Scene(name=name)
         db.session.add(new_scene)
         db.session.flush()
         for z in (s.get("zones") or []):
+            if not isinstance(z, dict):
+                continue
+            fpp_model = str(z.get("fpp_model", ""))
+            hex_color = str(z.get("hex_color", ""))
+            # These values are replayed against the FPP API and parsed as hex
+            # later — only known models and well-formed colors may be stored.
+            if fpp_model not in OVERLAY_MODELS or not _COLOR_RE.match(hex_color):
+                current_app.logger.warning(
+                    "Restore: skipping invalid zone %r/%r in scene '%s'",
+                    fpp_model, hex_color, name,
+                )
+                continue
             db.session.add(SceneZone(
                 scene_id=new_scene.id,
-                fpp_model=str(z.get("fpp_model", "")),
-                hex_color=str(z.get("hex_color", "#000000")),
+                fpp_model=fpp_model,
+                hex_color=hex_color,
             ))
         db.session.flush()
         try:
@@ -352,7 +416,13 @@ def restore_backup():
     # Effect presets — replace entirely
     EffectPreset.query.delete()
     db.session.flush()
+
+    def _as_list(v):
+        return v if isinstance(v, list) else []
+
     for p in (data.get("effect_presets") or []):
+        if not isinstance(p, dict):
+            continue
         name = str(p.get("name") or "").strip()[:64]
         effect_name = str(p.get("effect_name") or "").strip()[:128]
         if not name or not effect_name:
@@ -360,13 +430,18 @@ def restore_backup():
         db.session.add(EffectPreset(
             name=name,
             effect_name=effect_name,
-            models_json=json.dumps(p.get("models") or []),
-            args_json=json.dumps(p.get("args") or []),
+            models_json=json.dumps(_as_list(p.get("models"))),
+            args_json=json.dumps(_as_list(p.get("args"))),
             multisync=bool(p.get("multisync", False)),
-            systems_json=json.dumps(p.get("systems") or []),
+            systems_json=json.dumps(_as_list(p.get("systems"))),
         ))
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Backup restore failed at commit")
+        return jsonify({"error": f"Restore failed — no changes applied: {exc}"}), 500
     return jsonify({"ok": True})
 
 

@@ -17,3 +17,8 @@ app/static/uploads/*
 
 # Runtime log written by the service
 fpp-ui.log
+
+# Sales/marketing collateral — kept local, never deployed to controllers.
+# Ignored rather than untracked so FPP's `git clean -fd` update fallback
+# skips it, same reasoning as the uploads rule above.
+Brochure/

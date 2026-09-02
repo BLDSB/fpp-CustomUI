@@ -21,19 +21,33 @@ def index():
     return render_template("home.html")
 
 
+def _stored_brightness():
+    """Saved brightness, clamped to 0-100; 100 if unset, corrupt, or DB down."""
+    try:
+        setting = db.session.get(AppSetting, "brightness")
+    except Exception:
+        current_app.logger.exception("Could not read stored brightness — using 100")
+        return 100
+    if setting and setting.value:
+        try:
+            return max(0, min(100, int(setting.value)))
+        except (TypeError, ValueError):
+            current_app.logger.warning(
+                "Stored brightness %r is not a number — using 100", setting.value
+            )
+    return 100
+
+
 @main.route("/controls")
 @login_required
 def controls():
-    setting = db.session.get(AppSetting, "brightness")
-    brightness = int(setting.value) if setting and setting.value else 100
-    return render_template("index.html", brightness=brightness)
+    return render_template("index.html", brightness=_stored_brightness())
 
 
 @main.get("/api/brightness")
 @login_required
 def get_brightness():
-    setting = db.session.get(AppSetting, "brightness")
-    return jsonify({"brightness": int(setting.value) if setting and setting.value else 100})
+    return jsonify({"brightness": _stored_brightness()})
 
 
 @main.post("/api/brightness")
@@ -47,13 +61,18 @@ def set_brightness():
     except (TypeError, ValueError):
         return jsonify({"error": "brightness must be 0–100"}), 400
 
-    # Read existing processors, replace our brightness entry, write back
+    # Read existing processors, replace our brightness entry, write back.
+    # If the read fails we must NOT write back an empty list — that would
+    # silently delete every other output processor configured in FPP.
     try:
         resp = requests.get(_fpp("/channel/output/processors"), timeout=5)
         resp.raise_for_status()
         body = resp.json()
-    except Exception:
-        body = {"outputProcessors": []}
+        if not isinstance(body, dict):
+            raise ValueError(f"unexpected processors payload: {type(body).__name__}")
+    except Exception as exc:
+        current_app.logger.error("Could not read FPP output processors: %s", exc)
+        return jsonify({"error": "Could not read FPP output processors"}), 502
 
     processors = [
         p for p in (body.get("outputProcessors") or [])

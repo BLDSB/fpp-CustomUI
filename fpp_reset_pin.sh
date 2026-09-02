@@ -33,8 +33,9 @@ sed -i 's|^MASTER_PIN_HASH=.*|MASTER_PIN_HASH=|' "$ENV_FILE"
 grep -q '^MASTER_PIN_HASH=' "$ENV_FILE" || echo 'MASTER_PIN_HASH=' >> "$ENV_FILE"
 
 # sed -i rewrites the file as root; the service runs as fpp and must be able to
-# write its own PIN back, so hand ownership back.
+# write its own PIN back, so hand ownership back (and keep secrets owner-only).
 chown fpp:fpp "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 systemctl restart fpp-ui
 sleep 2
