@@ -59,6 +59,14 @@ if [ -f "/etc/logrotate.d/fpp-ui" ]; then
     echo "✓ Log rotation config removed."
 fi
 
+# Root-owned pip cache the installer creates outside the plugin dir, so FPP's
+# removal of the plugin directory never touches it. Path is spelled out rather
+# than taken from a variable: this is an rm -rf.
+if [ -d "/var/cache/fpp-ui-pip" ]; then
+    rm -rf /var/cache/fpp-ui-pip
+    echo "✓ pip cache removed."
+fi
+
 # Graceful reload is enough to drop our config, and a failure here must not
 # abort the uninstall (set -e) — FPP still removes the plugin directory next.
 systemctl reload apache2 2>/dev/null || service apache2 reload || \
