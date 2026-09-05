@@ -11,7 +11,11 @@
 
 [Unit]
 Description=FPP Custom Web UI (Flask)
-After=network.target fpp.service
+# Deliberately NOT ordered after fppd.service. FPP delays fppd for up to five
+# minutes at boot while it waits for a valid clock (no RTC on these units), and
+# ordering after it would take the UI down for that whole window. The startup
+# sync in app/__init__.py waits for the FPP API on its own instead.
+After=network.target
 Wants=network.target
 # Field units must never give up on restarting the UI, no matter how many
 # times it fails in a row.

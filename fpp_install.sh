@@ -83,6 +83,9 @@ sed "s|/home/fpp/fpp-ui|$PLUGIN_DIR|g" "$PLUGIN_DIR/deploy/fpp-ui.service" > "$T
 
 cp "$TMP_SERVICE" "$SERVICE_DEST"
 rm -f "$TMP_SERVICE"
+# cp inherits mktemp's 0600, which leaves the unit unreadable to anyone but
+# root — systemd copes, but `systemctl cat` and `systemd-analyze verify` do not.
+chmod 644 "$SERVICE_DEST"
 systemctl daemon-reload
 systemctl enable fpp-ui
 echo "✓ Systemd service installed."
