@@ -70,6 +70,64 @@ class Zone(db.Model):
         }
 
 
+class ZoneLayout(db.Model):
+    """Matrix geometry for a zone's FPP pixel overlay model.
+
+    Kept in its own table rather than as columns on Zone: the app only ever calls
+    db.create_all(), which adds missing tables but never missing columns, so new
+    columns would silently not exist on already-deployed controllers.
+
+    A zone with no row here keeps FPP's default rectangular handling.
+    """
+    __tablename__ = "zone_layouts"
+
+    slot = db.Column(db.Integer, primary_key=True)
+    source_name = db.Column(db.String(64), nullable=True)
+    width = db.Column(db.Integer, nullable=False)
+    height = db.Column(db.Integer, nullable=False)
+    node_count = db.Column(db.Integer, nullable=False)
+    start_channel = db.Column(db.Integer, nullable=False)
+    channel_count = db.Column(db.Integer, nullable=False)
+    channels_per_node = db.Column(db.Integer, nullable=False, default=3)
+    data = db.Column(db.Text, nullable=False)
+    imported_at = db.Column(db.String(32), nullable=True)
+
+    @property
+    def fpp_model_name(self):
+        return "All" if self.slot == 0 else f"Zone {self.slot}"
+
+    def to_grid(self):
+        """The dict shape app.overlay_layout produces and consumes."""
+        return {
+            "width": self.width,
+            "height": self.height,
+            "node_count": self.node_count,
+            "placed": self.node_count,
+            "collisions": 0,
+            "start_channel": self.start_channel,
+            "channel_count": self.channel_count,
+            "channels_per_node": self.channels_per_node,
+            "data": self.data,
+        }
+
+    def to_dict(self, include_data=False):
+        out = {
+            "slot": self.slot,
+            "fpp_model_name": self.fpp_model_name,
+            "source_name": self.source_name,
+            "width": self.width,
+            "height": self.height,
+            "node_count": self.node_count,
+            "start_channel": self.start_channel,
+            "channel_count": self.channel_count,
+            "channels_per_node": self.channels_per_node,
+            "imported_at": self.imported_at,
+        }
+        if include_data:
+            out["data"] = self.data
+        return out
+
+
 class Scene(db.Model):
     __tablename__ = "scenes"
 

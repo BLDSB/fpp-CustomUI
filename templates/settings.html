@@ -160,6 +160,43 @@
     .modal-box p  { font-size: 0.85rem; color: var(--text-dim); margin: 0; line-height: 1.55; }
     .modal-box a  { color: var(--accent); }
     .modal-actions { display: flex; gap: 0.65rem; justify-content: flex-end; flex-wrap: wrap; }
+    .modal-box.wide { max-width: 760px; }
+
+    /* Layout import */
+    .layout-list {
+        display: flex; flex-direction: column; gap: 0.5rem;
+        max-height: 46vh; overflow-y: auto; padding-right: 0.35rem;
+    }
+    .layout-row {
+        display: flex; align-items: center; gap: 0.85rem;
+        padding: 0.5rem 0.65rem;
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+    }
+    .layout-row.is-warn { border-color: #b3892f; }
+    .layout-row canvas {
+        /* One canvas pixel per node cell, blown up without smoothing. */
+        image-rendering: pixelated;
+        width: 52px; height: 52px;
+        object-fit: contain;
+        background: rgba(0,0,0,0.25);
+        border-radius: 3px;
+        flex: 0 0 auto;
+    }
+    .layout-meta { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+    .layout-meta .name { font-size: 0.85rem; font-weight: 600; }
+    .layout-meta .detail { font-size: 0.75rem; color: var(--text-dim); }
+    .layout-meta .warn { font-size: 0.75rem; color: #e0a83a; }
+    .layout-slot {
+        margin-left: auto; flex: 0 0 auto;
+        font-size: 0.75rem; color: var(--text-dim);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .zone-layout-badge {
+        font-size: 0.7rem; color: var(--text-dim);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: nowrap;
+    }
 
     /* Image upload row */
     .img-input-row { display: flex; gap: 0.4rem; align-items: stretch; }
@@ -474,9 +511,17 @@
             Zone names here are display-only — the FPP Pixel Overlay Model names
             (<em>All</em>, <em>Zone 1</em>…<em>Zone 15</em>) must match what's configured in FPP.
         </p>
+        <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
+            Import a layout from xLights to give each zone its real matrix shape, so
+            overlay effects render across the model instead of along a single line.
+        </p>
         <div id="zones-list" style="display:flex;flex-direction:column;gap:0.6rem;margin-top:0.25rem"></div>
         <div style="display:flex;gap:0.65rem;flex-wrap:wrap;align-items:center">
             <button id="btn-save-zones" class="btn-save">Save Zones</button>
+            <button id="btn-import-layout" type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
+                Import Layout
+            </button>
             <button id="btn-create-overlay-models" type="button" class="btn-save"
                     style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
                 Create FPP Overlay Models
@@ -597,22 +642,45 @@
     <div class="modal-box">
         <h3>Create FPP Pixel Overlay Models</h3>
         <p>
-            This creates the pixel overlay models for the 15 zones in FPP, but
-            <strong>you must update the channel data in FPP</strong> before they
-            will work correctly.
+            This writes the pixel overlay models into FPP and restarts fppd.
+            Zones with an imported layout get their full matrix shape and channel
+            range. Zones without one keep the channel data already set in FPP —
+            <strong>nothing you configured there is overwritten</strong>.
         </p>
         <p>
-            After creating, open the
+            A zone that has neither is created as an empty placeholder, and
+            <strong>you must set its channel data</strong> on the
             <a id="fpp-overlay-link" href="#" target="_blank" rel="noopener noreferrer">
                 FPP Pixel Overlay Models page
             </a>
-            to set the start channel and channel count for each zone.
+            before it will work.
         </p>
         <div class="modal-actions">
             <button type="button" class="btn-save"
                     style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)"
                     id="btn-modal-cancel">Cancel</button>
             <button type="button" class="btn-save" id="btn-modal-confirm">Create Models</button>
+        </div>
+    </div>
+</div>
+
+<!-- Import layout from xLights modal -->
+<div class="modal-backdrop" id="modal-layout-import" role="dialog" aria-modal="true">
+    <div class="modal-box wide">
+        <h3>Import Layout</h3>
+        <p id="layout-intro">
+            Reading the xLights display map on this controller. Each model is matched to
+            a zone in start-channel order — check the shapes below before importing.
+        </p>
+        <div class="layout-list" id="layout-list"></div>
+        <label class="zone-toggle" style="font-size:0.8rem">
+            <input type="checkbox" id="layout-set-names"> Also rename zones to the model names
+        </label>
+        <div class="modal-actions">
+            <button type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)"
+                    id="btn-layout-cancel">Cancel</button>
+            <button type="button" class="btn-save" id="btn-layout-confirm">Import Layout</button>
         </div>
     </div>
 </div>
@@ -752,6 +820,126 @@
         }
     });
 
+    // ── Import layout from xLights ──────────────────────────────
+    const layoutModal = document.getElementById('modal-layout-import');
+    const layoutList  = document.getElementById('layout-list');
+    let   layoutCandidates = [];
+
+    function drawMask(canvas, mask) {
+        // One canvas pixel per cell; CSS scales it up with pixelated rendering.
+        const h = mask.length, w = mask[0] ? mask[0].length : 0;
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.createImageData(w, h);
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const on = mask[y][x] === '1';
+                img.data[i] = on ? 233 : 0;
+                img.data[i + 1] = on ? 69 : 0;
+                img.data[i + 2] = on ? 96 : 0;
+                img.data[i + 3] = on ? 255 : 0;
+            }
+        }
+        ctx.putImageData(img, 0, 0);
+    }
+
+    function renderLayoutCandidates(models) {
+        layoutList.innerHTML = '';
+        models.forEach(m => {
+            const row = document.createElement('div');
+            const warn = m.error || m.collisions > 0 || m.channel_mismatch || m.slot === null;
+            row.className = 'layout-row' + (warn ? ' is-warn' : '');
+
+            const notes = [];
+            if (m.error) notes.push(escHtml(m.error));
+            if (m.collisions > 0)
+                notes.push(`${m.collisions} node(s) landed on an occupied cell`);
+            if (m.channel_mismatch)
+                notes.push(`FPP currently has channel ${m.current_start_channel} × ${m.current_channel_count}`);
+            if (m.slot === null)
+                notes.push('No zone available — only Zone 1–15 exist');
+
+            row.innerHTML = `
+                <canvas aria-hidden="true"></canvas>
+                <div class="layout-meta">
+                    <span class="name">${m.is_composite ? 'Whole display' : escHtml(m.source_name)}</span>
+                    <span class="detail">${m.width}×${m.height} · ${m.placed} of ${m.node_count} nodes ·
+                        channel ${m.start_channel}, ${m.channel_count} ch</span>
+                    ${notes.length ? `<span class="warn">${notes.join(' · ')}</span>` : ''}
+                </div>
+                <span class="layout-slot">${m.fpp_model_name || '—'}</span>
+            `;
+            drawMask(row.querySelector('canvas'), m.mask);
+            layoutList.appendChild(row);
+        });
+    }
+
+    document.getElementById('btn-import-layout').addEventListener('click', async () => {
+        layoutList.innerHTML = '<p class="detail">Reading display map…</p>';
+        layoutModal.classList.add('open');
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/fpp/layout/preview');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            // Only importable rows: a model with no zone slot has nowhere to go.
+            layoutCandidates = (data.models || []).filter(m => m.slot !== null && !m.error);
+            renderLayoutCandidates(data.models || []);
+            if (!layoutCandidates.length) {
+                layoutList.innerHTML += '<p class="detail">Nothing here can be imported.</p>';
+            }
+        } catch (err) {
+            layoutList.innerHTML = '';
+            layoutModal.classList.remove('open');
+            showToast('Error: ' + err.message, 'error');
+        }
+    });
+
+    document.getElementById('btn-layout-cancel').addEventListener('click', () => {
+        layoutModal.classList.remove('open');
+    });
+    layoutModal.addEventListener('click', e => {
+        if (e.target === layoutModal) layoutModal.classList.remove('open');
+    });
+
+    document.getElementById('btn-layout-confirm').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-layout-confirm');
+        if (!layoutCandidates.length) {
+            showToast('Nothing to import', 'error');
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Importing…';
+        try {
+            const res = await fetch((window.APP_ROOT || '') + '/api/fpp/layout/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    set_names: document.getElementById('layout-set-names').checked,
+                    models: layoutCandidates.map(m => ({ slot: m.slot, source_name: m.source_name })),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            const renamed = document.getElementById('layout-set-names').checked;
+            layoutCandidates.forEach(m => {
+                layoutsData[m.slot] = { width: m.width, height: m.height, source_name: m.source_name };
+                if (renamed && m.slot > 0) {
+                    const z = zonesData.find(z => z.slot === m.slot);
+                    if (z) z.display_name = m.source_name;
+                }
+            });
+            renderZones(zonesData);
+            layoutModal.classList.remove('open');
+            showToast(`Imported ${data.imported} layout(s) — now run Create FPP Overlay Models.`, 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled    = false;
+            btn.textContent = 'Import Layout';
+        }
+    });
+
     // ── Create FPP Overlay Models modal ─────────────────────────
     const overlayModal   = document.getElementById('modal-overlay-models');
     const fppOverlayLink = document.getElementById('fpp-overlay-link');
@@ -844,6 +1032,14 @@
     // ── Zones ──────────────────────────────────────────────────
     const zonesList = document.getElementById('zones-list');
     const zonesData = {{ zones | tojson }};
+    let   layoutsData = {{ layouts | tojson }};
+
+    function layoutBadge(slot) {
+        const l = layoutsData[slot];
+        if (!l) return '';
+        return `<span class="zone-layout-badge" title="Imported from ${escHtml(l.source_name || 'xLights')}">`
+             + `${l.width}×${l.height}</span>`;
+    }
 
     function renderZones(zones) {
         zonesList.innerHTML = '';
@@ -855,6 +1051,7 @@
                 <span class="zone-fpp-label">${z.fpp_model_name}</span>
                 <input type="text" value="${escHtml(z.display_name)}" maxlength="64"
                        placeholder="${z.fpp_model_name}" aria-label="Display name for ${z.fpp_model_name}">
+                ${layoutBadge(z.slot)}
                 <label class="zone-toggle">
                     <input type="checkbox" ${z.hidden ? 'checked' : ''}> Hide
                 </label>
