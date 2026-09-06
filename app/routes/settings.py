@@ -11,8 +11,9 @@ from app import db
 from app.auth_utils import login_required
 from app.models import (
     OVERLAY_MODELS, AppSetting, ColorButton, EffectPreset, SavedColor, Scene,
-    SceneZone, Zone, get_all_zones,
+    SceneZone, Zone, ZoneLayout, get_all_zones,
 )
+from app import overlay_layout
 from app import ui_path as ui_path_mod
 
 settings_bp = Blueprint("settings", __name__)
@@ -43,8 +44,9 @@ def settings_page():
         if settings.get(key):
             settings[key] = ui_path_mod.reanchor_upload_url(settings[key])
     zones = [z.to_dict() for z in get_all_zones() if z.slot != 0]
+    layouts = {l.slot: l.to_dict() for l in ZoneLayout.query.all()}
     return render_template(
-        "settings.html", settings=settings, zones=zones,
+        "settings.html", settings=settings, zones=zones, layouts=layouts,
         ui_path=ui_path_mod.current_path(),
         reserved_paths=sorted(ui_path_mod.RESERVED_PATHS),
     )
@@ -183,11 +185,208 @@ def save_zones():
 
 # ── FPP integration ───────────────────────────────────────────────────────────
 
+DISPLAY_MAP_PATH = "/home/fpp/media/config/virtualdisplaymap"
+OVERLAY_CONFIG_PATH = "/home/fpp/media/config/model-overlays.json"
+COMPOSITE_KEY = "__all__"
+
+
+def _current_overlay_models():
+    """Name -> entry from FPP's model-overlays.json, or {} if unreadable."""
+    try:
+        with open(OVERLAY_CONFIG_PATH) as f:
+            data = json.load(f)
+        return {
+            m.get("Name"): m
+            for m in data.get("models", [])
+            if isinstance(m, dict) and m.get("Name")
+        }
+    except Exception:
+        return {}
+
+
+def _derive_from_map():
+    """Parse the display map and pair its models with zone slots.
+
+    Models are matched to slots in start-channel order, which is how the zones
+    were laid out in the first place.  Slot 0 gets the whole-display composite.
+    Returns (entries, error_response_or_None).
+    """
+    if not os.path.exists(DISPLAY_MAP_PATH):
+        return None, (jsonify({
+            "error": "No xLights display map found on this controller. "
+                     "Upload one from xLights (FPP Connect → Virtual Display Map), "
+                     f"or place it at {DISPLAY_MAP_PATH}."
+        }), 404)
+    try:
+        with open(DISPLAY_MAP_PATH) as f:
+            models = overlay_layout.parse_display_map(f.read())
+    except Exception as exc:
+        current_app.logger.warning("Could not read display map: %s", exc)
+        return None, (jsonify({"error": f"Could not read the display map: {exc}"}), 500)
+
+    if not models:
+        return None, (jsonify({"error": "The display map has no models in it."}), 400)
+
+    entries = []
+    grids = [(m, overlay_layout.derive_grid(m)) for m in models]
+    grids.sort(key=lambda pair: pair[1]["start_channel"])
+
+    composite = overlay_layout.derive_composite_grid(models)
+    if composite:
+        entries.append((0, COMPOSITE_KEY, composite))
+
+    for slot, (model, grid) in enumerate(grids, start=1):
+        if slot > 15:
+            # Only Zone 1-15 exist; anything beyond is reported, not assigned.
+            entries.append((None, model["name"], grid))
+            continue
+        entries.append((slot, model["name"], grid))
+    return entries, None
+
+
+@settings_bp.get("/api/fpp/layout/preview")
+@login_required
+def layout_preview():
+    """Derive matrix geometry from the display map without writing anything."""
+    entries, err = _derive_from_map()
+    if err:
+        return err
+    current = _current_overlay_models()
+
+    out = []
+    for slot, name, grid in entries:
+        model_name = None if slot is None else ("All" if slot == 0 else f"Zone {slot}")
+        live = current.get(model_name) or {}
+        out.append({
+            "slot": slot,
+            "source_name": name,
+            "fpp_model_name": model_name,
+            "is_composite": name == COMPOSITE_KEY,
+            "width": grid["width"],
+            "height": grid["height"],
+            "node_count": grid["node_count"],
+            "placed": grid["placed"],
+            "collisions": grid["collisions"],
+            "start_channel": grid["start_channel"],
+            "channel_count": grid["channel_count"],
+            "current_start_channel": live.get("StartChannel"),
+            "current_channel_count": live.get("ChannelCount"),
+            "channel_mismatch": bool(live) and (
+                live.get("StartChannel") != grid["start_channel"]
+                or live.get("ChannelCount") != grid["channel_count"]
+            ),
+            "error": overlay_layout.validate_grid(grid, name),
+            "mask": overlay_layout.grid_mask(grid["data"]),
+        })
+    return jsonify({"models": out, "map_path": DISPLAY_MAP_PATH})
+
+
+@settings_bp.post("/api/fpp/layout/import")
+@login_required
+def layout_import():
+    """Store the confirmed geometry as ZoneLayout rows.
+
+    Each item is either {slot, source_name} — re-derived from the display map —
+    or {slot, data, start_channel} for a layout pasted from an xLights custom
+    model, the escape hatch for nodes that do not sit on a regular lattice.
+    """
+    body = request.get_json(silent=True) or {}
+    items = body.get("models")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "No models selected"}), 400
+
+    derived = {}
+    if any(not item.get("data") for item in items if isinstance(item, dict)):
+        entries, err = _derive_from_map()
+        if err:
+            return err
+        derived = {name: grid for _slot, name, grid in entries}
+
+    staged = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        slot = item.get("slot")
+        if not isinstance(slot, int) or slot < 0 or slot > 15:
+            continue
+        source_name = str(item.get("source_name") or "")[:64]
+
+        if item.get("data"):
+            try:
+                grid = overlay_layout.parse_xlights_custom(
+                    str(item["data"]),
+                    int(item.get("start_channel") or 1),
+                    int(item.get("channels_per_node") or 3),
+                )
+            except (ValueError, TypeError) as exc:
+                return jsonify({"error": f"Zone {slot}: {exc}"}), 400
+        else:
+            grid = derived.get(source_name)
+            if grid is None:
+                return jsonify({
+                    "error": f"Zone {slot}: '{source_name}' is not in the display map."
+                }), 400
+
+        err = overlay_layout.validate_grid(grid, f"Zone {slot}")
+        if err:
+            return jsonify({"error": err}), 400
+        staged.append((slot, source_name, grid))
+
+    if not staged:
+        return jsonify({"error": "No valid models to import"}), 400
+
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    set_names = bool(body.get("set_names"))
+    zones = {z.slot: z for z in get_all_zones()}
+
+    for slot, source_name, grid in staged:
+        layout = db.session.get(ZoneLayout, slot)
+        if layout is None:
+            layout = ZoneLayout(slot=slot)
+            db.session.add(layout)
+        layout.source_name = source_name
+        layout.width = grid["width"]
+        layout.height = grid["height"]
+        layout.node_count = grid["placed"]
+        layout.start_channel = grid["start_channel"]
+        layout.channel_count = grid["channel_count"]
+        layout.channels_per_node = grid["channels_per_node"]
+        layout.data = grid["data"]
+        layout.imported_at = now
+
+        if set_names and slot > 0 and source_name and source_name != COMPOSITE_KEY:
+            zone = zones.get(slot)
+            if zone is not None:
+                zone.display_name = source_name[:64]
+
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Layout import failed at commit")
+        return jsonify({"error": f"Import failed — no changes applied: {exc}"}), 500
+
+    return jsonify({"ok": True, "imported": len(staged)})
+
+
+@settings_bp.post("/api/fpp/layout/clear")
+@login_required
+def layout_clear():
+    """Drop all stored layouts, returning zones to FPP's rectangular handling."""
+    ZoneLayout.query.delete()
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": f"Could not clear layouts: {exc}"}), 500
+    return jsonify({"ok": True})
+
+
 @settings_bp.post("/api/fpp/create-overlay-models")
 @login_required
 def create_overlay_models():
-    config_path = "/home/fpp/media/config/model-overlays.json"
-    zone_names = {f"Zone {i}" for i in range(1, 16)}
+    config_path = OVERLAY_CONFIG_PATH
+    managed_names = OVERLAY_MODELS
 
     try:
         if os.path.exists(config_path):
@@ -201,24 +400,50 @@ def create_overlay_models():
         )
         existing = {"models": [], "autoCreate": True}
 
-    # Keep any non-Zone-1-15 models; replace Zone entries with fresh stubs
-    kept = [m for m in existing.get("models", []) if m.get("Name") not in zone_names]
-    new_zones = [
-        {
-            "Name": f"Zone {i}",
-            "Type": "Channel",
-            "StartChannel": 1,
-            "ChannelCount": 3,
-            "ChannelCountPerNode": 3,
-            "StringCount": 1,
-            "StrandsPerString": 1,
-            "Orientation": "horizontal",
-            "StartCorner": "TL",
-            "xLights": False,
-        }
-        for i in range(1, 16)
+    prior = {
+        m.get("Name"): m
+        for m in existing.get("models", [])
+        if isinstance(m, dict) and m.get("Name") in managed_names
+    }
+    layouts = {l.slot: l for l in ZoneLayout.query.all()}
+
+    # Keep any model we don't manage untouched.
+    kept = [
+        m for m in existing.get("models", [])
+        if not (isinstance(m, dict) and m.get("Name") in managed_names)
     ]
-    existing["models"] = kept + new_zones
+
+    rebuilt = []
+    for slot in range(0, 16):
+        name = "All" if slot == 0 else f"Zone {slot}"
+        layout = layouts.get(slot)
+        if layout is not None:
+            grid = layout.to_grid()
+            err = overlay_layout.validate_grid(grid, name)
+            if err:
+                current_app.logger.error("Skipping %s: %s", name, err)
+            else:
+                rebuilt.append(overlay_layout.to_fpp_model(name, grid))
+                continue
+        if name in prior:
+            # No layout — keep the operator's channel data exactly as it is
+            # rather than resetting it to a stub.
+            rebuilt.append(prior[name])
+        elif slot > 0:
+            rebuilt.append({
+                "Name": name,
+                "Type": "Channel",
+                "StartChannel": 1,
+                "ChannelCount": 3,
+                "ChannelCountPerNode": 3,
+                "StringCount": 1,
+                "StrandsPerString": 1,
+                "Orientation": "horizontal",
+                "StartCorner": "TL",
+                "xLights": False,
+            })
+
+    existing["models"] = kept + rebuilt
 
     # Atomic write so a crash mid-write can't corrupt FPP's own model config.
     tmp_path = config_path + ".tmp"
@@ -281,12 +506,16 @@ def genius_reboot():
 @login_required
 def download_backup():
     data = {
-        "version": 1,
+        "version": 3,
         "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
         "settings": {s.key: s.value for s in AppSetting.query.all()},
         "zones": [
             {"slot": z.slot, "display_name": z.display_name, "hidden": z.hidden}
             for z in Zone.query.order_by(Zone.slot).all()
+        ],
+        "zone_layouts": [
+            l.to_dict(include_data=True)
+            for l in ZoneLayout.query.order_by(ZoneLayout.slot).all()
         ],
         "saved_colors": [
             {"id": c.id, "name": c.name, "hex_value": c.hex_value}
@@ -318,7 +547,7 @@ def restore_backup():
     except Exception:
         return jsonify({"error": "Invalid JSON file"}), 400
 
-    if data.get("version") not in (1, 2):
+    if data.get("version") not in (1, 2, 3):
         return jsonify({"error": "Unsupported backup version"}), 400
 
     # Settings — merge (update existing keys, add new ones)
@@ -347,6 +576,39 @@ def restore_backup():
             existing_zones[slot].hidden = hidden
         else:
             db.session.add(Zone(slot=slot, display_name=name or ("All" if slot == 0 else f"Zone {slot}"), hidden=hidden))
+
+    # Zone layouts — replace entirely when the backup carries them
+    if isinstance(data.get("zone_layouts"), list):
+        ZoneLayout.query.delete()
+        db.session.flush()
+        for item in data["zone_layouts"]:
+            if not isinstance(item, dict):
+                continue
+            slot = item.get("slot")
+            grid_data = item.get("data")
+            if not isinstance(slot, int) or slot < 0 or slot > 15 or not grid_data:
+                continue
+            try:
+                layout = ZoneLayout(
+                    slot=slot,
+                    source_name=str(item.get("source_name") or "")[:64] or None,
+                    width=int(item["width"]),
+                    height=int(item["height"]),
+                    node_count=int(item["node_count"]),
+                    start_channel=int(item["start_channel"]),
+                    channel_count=int(item["channel_count"]),
+                    channels_per_node=int(item.get("channels_per_node") or 3),
+                    data=str(grid_data),
+                    imported_at=str(item.get("imported_at") or "")[:32] or None,
+                )
+            except (KeyError, TypeError, ValueError):
+                current_app.logger.warning("Restore: skipping malformed layout for slot %r", slot)
+                continue
+            err = overlay_layout.validate_grid(layout.to_grid(), f"Zone {slot}")
+            if err:
+                current_app.logger.warning("Restore: %s", err)
+                continue
+            db.session.add(layout)
 
     # Saved colors + buttons — replace entirely
     ColorButton.query.delete()
