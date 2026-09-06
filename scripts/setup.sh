@@ -115,22 +115,21 @@ SERVICE_DEST="/etc/systemd/system/fpp-ui.service"
 TMP_SERVICE=$(mktemp)
 sed "s|/home/fpp/fpp-ui|$PROJECT_DIR|g" "$SERVICE_SRC" > "$TMP_SERVICE"
 
-if [ -f "$SERVICE_DEST" ]; then
-    echo "✓ Systemd service already installed."
-    echo "  To reinstall: sudo cp $TMP_SERVICE $SERVICE_DEST && sudo systemctl daemon-reload"
+# Always overwrite: skipping when the file exists leaves an old unit in place,
+# so a fix to fpp-ui.service would never reach a box set up with this script.
+# fpp_install.sh copies unconditionally for the same reason.
+echo "▶ Installing systemd service..."
+if sudo cp "$TMP_SERVICE" "$SERVICE_DEST" && sudo chmod 644 "$SERVICE_DEST" \
+        && sudo systemctl daemon-reload; then
+    sudo systemctl enable fpp-ui
+    sudo systemctl restart fpp-ui
+    echo "✓ Service installed, enabled, and started."
 else
-    echo "▶ Installing systemd service..."
-    if sudo cp "$TMP_SERVICE" "$SERVICE_DEST" && sudo systemctl daemon-reload; then
-        sudo systemctl enable fpp-ui
-        sudo systemctl restart fpp-ui
-        echo "✓ Service installed, enabled, and started."
-    else
-        echo "  ✗ Could not install service (no sudo?). To install manually:"
-        echo "    sudo cp $TMP_SERVICE $SERVICE_DEST"
-        echo "    sudo systemctl daemon-reload"
-        echo "    sudo systemctl enable fpp-ui"
-        echo "    sudo systemctl start fpp-ui"
-    fi
+    echo "  ✗ Could not install service (no sudo?). To install manually:"
+    echo "    sudo cp $TMP_SERVICE $SERVICE_DEST"
+    echo "    sudo systemctl daemon-reload"
+    echo "    sudo systemctl enable fpp-ui"
+    echo "    sudo systemctl start fpp-ui"
 fi
 rm -f "$TMP_SERVICE"
 echo ""
