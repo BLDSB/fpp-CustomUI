@@ -152,6 +152,59 @@
         display: none;
     }
 
+    /* ── Schedule preview card ── */
+    #schedule-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 1.75rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 0.7rem 1.6rem;
+    }
+    .sched-seg {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        min-width: 0;
+    }
+    .sched-seg + .sched-seg {
+        border-left: 1px solid var(--border-dim);
+        padding-left: 1.6rem;
+    }
+    .sched-seg-next { flex: 1 1 240px; }
+    .sched-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--text-dim);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+    .sched-value {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--text);
+        white-space: nowrap;
+    }
+    .sched-seg-next .sched-value { font-weight: 500; white-space: normal; }
+    .sched-value.dim { color: var(--text-dim); font-weight: 500; }
+
+    @media (max-width: 700px) {
+        #schedule-card {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem 1rem;
+        }
+        .sched-seg + .sched-seg { border-left: none; padding-left: 0; }
+        .sched-seg-next { grid-column: 1 / -1; }
+        .sched-value { white-space: normal; }
+    }
+
     /* ── Loop toggle pill ── */
     .toggle-pill {
         background: rgba(46,204,113,0.15);
@@ -184,6 +237,26 @@
     <input type="range" id="brightness-slider" min="0" max="100" value="{{ brightness }}">
     <span id="brightness-value">{{ brightness }}%</span>
     <span id="brightness-status"></span>
+</div>
+
+<!-- Schedule preview -->
+<div id="schedule-card">
+    <div class="sched-seg">
+        <span class="sched-label">Scheduler Status</span>
+        <span class="sched-value" id="sched-status">…</span>
+    </div>
+    <div class="sched-seg">
+        <span class="sched-label">Playlist Started At</span>
+        <span class="sched-value dim" id="sched-started">—</span>
+    </div>
+    <div class="sched-seg">
+        <span class="sched-label" id="sched-stop-label">Graceful Stop At</span>
+        <span class="sched-value dim" id="sched-stop">—</span>
+    </div>
+    <div class="sched-seg sched-seg-next">
+        <span class="sched-label">Next Playlist</span>
+        <span class="sched-value dim" id="sched-next">—</span>
+    </div>
 </div>
 
 <!-- Status banner -->
@@ -220,6 +293,13 @@
     const statusText = document.getElementById('status-text');
     const btnStop = document.getElementById('btn-stop');
     const btnLoop = document.getElementById('btn-loop');
+    const schedEls = {
+        status:    document.getElementById('sched-status'),
+        started:   document.getElementById('sched-started'),
+        stopLabel: document.getElementById('sched-stop-label'),
+        stop:      document.getElementById('sched-stop'),
+        next:      document.getElementById('sched-next'),
+    };
     let currentPlaylist = null;
     let statusPollTimer = null;
     // Scene and Effect playlists are applied directly by Flask (overlay models),
@@ -291,10 +371,65 @@
         }
     }
 
+    // ── Schedule preview (mirrors FPP's own scheduler bar) ─────
+    // FPP pads its date strings ("Mon Sep  7"), so collapse whitespace first.
+    const tidy = t => String(t ?? '').replace(/\s+/g, ' ').trim();
+
+    function setSched(el, text, dim) {
+        el.textContent = text;
+        el.classList.toggle('dim', !!dim);
+    }
+
+    function renderScheduler(s) {
+        const sch = s.scheduler || {};
+        const cur = sch.currentPlaylist || {};
+        const curName = tidy(cur.playlistName);
+        const rawState = tidy(sch.status).toLowerCase();
+
+        let state;
+        if (sch.enabled !== undefined && Number(sch.enabled) === 0) {
+            state = 'Disabled';
+        } else if (rawState === 'playing' && curName) {
+            state = `Playing '${curName}'`;
+        } else if (rawState) {
+            state = rawState.charAt(0).toUpperCase() + rawState.slice(1);
+        } else {
+            state = 'Idle';
+        }
+        setSched(schedEls.status, state, state === 'Idle' || state === 'Disabled');
+
+        const started = tidy(cur.actualStartTimeStr);
+        setSched(schedEls.started, started || '—', !started);
+
+        // FPP labels the stop by its type: Graceful / Hard Stop / Immediate
+        // — trim its trailing "Stop" so "Hard Stop" reads "Hard Stop At".
+        const stopType = tidy(cur.stopTypeStr).replace(/\s*stop$/i, '') || 'Graceful';
+        schedEls.stopLabel.textContent = `${stopType} Stop At`;
+        const stopAt = tidy(cur.scheduledEndTimeStr);
+        setSched(schedEls.stop, stopAt || '—', !stopAt);
+
+        // FPP 9 reports scheduler.nextPlaylist; older builds only next_playlist.
+        const nx = sch.nextPlaylist || {};
+        const nextName = tidy(nx.playlistName) || tidy(s.next_playlist?.playlist);
+        const nextTime = tidy(nx.scheduledStartTimeStr) || tidy(s.next_playlist?.start_time);
+        if (nextName) {
+            setSched(schedEls.next, `'${nextName}'${nextTime ? ` on ${nextTime}` : ''}`, false);
+        } else {
+            setSched(schedEls.next, 'None scheduled', true);
+        }
+    }
+
+    function schedulerUnavailable() {
+        setSched(schedEls.status, 'Unavailable', true);
+        schedEls.stopLabel.textContent = 'Graceful Stop At';
+        [schedEls.started, schedEls.stop, schedEls.next].forEach(el => setSched(el, '—', true));
+    }
+
     // ── Poll FPP status ────────────────────────────────────────
     async function pollStatus() {
         try {
             const s = await apiFetch('/api/fppd/status');
+            renderScheduler(s);
             const mode = s.mode_name || s.status || 'unknown';
             const rawPlaylist = s.current_playlist?.playlist || '';
             const isTempSeq = rawPlaylist === 'Current-Sequence';
@@ -330,6 +465,7 @@
             });
         } catch {
             statusText.innerHTML = '<span class="label">Status:</span> <span style="color:#a0a0b0">FPP unreachable</span>';
+            schedulerUnavailable();
         }
     }
 
