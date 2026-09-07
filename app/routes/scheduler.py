@@ -61,15 +61,22 @@ def _validate(data):
     if end_time not in SOLAR_TIMES and not _TIME_RE.match(end_time):
         return None, "endTime must be HH:MM:SS or a solar label"
 
+    # FPP stores solar offsets in MINUTES (see GetTimeFromSun in ScheduleEntry.cpp);
+    # anything past a day pushes the computed time out of range and FPP silently
+    # falls back to 8AM/8PM.
     try:
         start_offset = int(data.get("startTimeOffset", 0))
+        if not -1439 <= start_offset <= 1439:
+            raise ValueError
     except (TypeError, ValueError):
-        return None, "startTimeOffset must be an integer"
+        return None, "startTimeOffset must be a number of minutes between -1439 and 1439"
 
     try:
         end_offset = int(data.get("endTimeOffset", 0))
+        if not -1439 <= end_offset <= 1439:
+            raise ValueError
     except (TypeError, ValueError):
-        return None, "endTimeOffset must be an integer"
+        return None, "endTimeOffset must be a number of minutes between -1439 and 1439"
 
     try:
         repeat = int(data.get("repeat", 0))
