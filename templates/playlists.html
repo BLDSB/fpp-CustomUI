@@ -1,0 +1,669 @@
+{% extends "base.html" %}
+{% block title %}Playlists — Lights Control{% endblock %}
+
+{% block extra_head %}
+<style>
+    .pl-layout {
+        display: grid;
+        /* minmax(0, …) so the builder track can shrink: the item rows have
+           fixed-width controls whose min-content width would otherwise push the
+           page into horizontal scroll. */
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: 1.5rem;
+        align-items: start;
+    }
+    /* Stack early — the Pi kiosk screen is 800px wide and the builder needs the
+       full width for a comfortable row. */
+    @media (max-width: 900px) {
+        .pl-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    .pl-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .pl-card h2 {
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+    }
+    .empty-state { color: var(--text-dim); font-size: 0.85rem; }
+
+    /* ── Saved list ── */
+    #saved-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .saved-row {
+        display: flex;
+        align-items: stretch;
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        overflow: hidden;
+        transition: border-color 0.15s;
+    }
+    .saved-row:hover { border-color: var(--accent); }
+    .saved-row.editing { border-color: var(--accent); }
+    .saved-main {
+        flex: 1;
+        min-width: 0;
+        background: var(--surface);
+        border: none;
+        color: var(--text);
+        text-align: left;
+        padding: 0.55rem 0.8rem;
+        cursor: pointer;
+        transition: filter 0.15s;
+    }
+    .saved-main:hover { filter: brightness(1.2); }
+    .saved-name {
+        display: block;
+        font-weight: 500;
+        font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .saved-meta { display: block; font-size: 0.74rem; color: var(--text-dim); margin-top: 0.15rem; }
+    .saved-act {
+        background: var(--bg);
+        border: none;
+        border-left: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        padding: 0 0.7rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: color 0.15s, background 0.15s;
+    }
+    .saved-act:hover { color: var(--text); }
+    .saved-act.del:hover { color: var(--accent); background: rgba(233,69,96,0.1); }
+
+    /* ── Builder ── */
+    .builder-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .builder-title { font-size: 1rem; font-weight: 600; color: var(--text); }
+    .pl-input {
+        background: var(--bg);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.5rem 0.7rem;
+        font-size: 0.9rem;
+        min-width: 0;
+    }
+    .pl-input:focus { outline: none; border-color: var(--accent); }
+    #pl-name { flex: 1; min-width: 160px; }
+
+    .repeat-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        color: var(--text-dim);
+    }
+    .repeat-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+    .toggle-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+
+    /* Item order is decided at play time when Randomize is on, so the numbered
+       order in the builder no longer reflects what will actually run. */
+    .random-note {
+        font-size: 0.78rem;
+        color: var(--text-dim);
+        margin: -0.4rem 0 0;
+    }
+
+    /* ── Item rows ── */
+    #item-list { display: flex; flex-direction: column; gap: 0.45rem; }
+    .item-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        background: var(--surface-hi, var(--surface));
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        padding: 0.5rem 0.6rem;
+    }
+    .item-row.missing { border-color: var(--accent); }
+    .item-badge {
+        flex-shrink: 0;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
+        border-radius: 4px;
+        padding: 0.15rem 0.4rem;
+        min-width: 62px;
+        text-align: center;
+    }
+    .item-label {
+        flex: 1;
+        min-width: 0;
+        font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .item-row.missing .item-label { color: var(--accent); }
+    .item-dur {
+        width: 74px;
+        flex-shrink: 0;
+        background: var(--bg);
+        border: 1px solid var(--border-dim);
+        border-radius: 4px;
+        color: var(--text);
+        padding: 0.3rem 0.4rem;
+        font-size: 0.85rem;
+        text-align: right;
+    }
+    .item-dur:focus { outline: none; border-color: var(--accent); }
+    .item-dur-unit { font-size: 0.75rem; color: var(--text-dim); flex-shrink: 0; }
+    .item-dur-spacer { width: 74px; flex-shrink: 0; }
+
+    /* Generous hit areas — this runs on a Pi touchscreen. */
+    .item-btn {
+        flex-shrink: 0;
+        width: 38px;
+        height: 38px;
+        background: var(--bg);
+        border: 1px solid var(--border-dim);
+        border-radius: 5px;
+        color: var(--text-dim);
+        font-size: 0.95rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .item-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text); }
+    .item-btn:disabled { opacity: 0.3; cursor: default; }
+    .item-btn.del:hover { color: var(--accent); border-color: var(--accent); background: rgba(233,69,96,0.1); }
+
+    /* ── Add palette ── */
+    .palette { border-top: 1px solid var(--border-dim); padding-top: 1rem; }
+    .palette-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+    .palette-tab {
+        background: transparent;
+        border: 1px solid var(--border-dim);
+        border-radius: 999px;
+        color: var(--text-dim);
+        padding: 0.35rem 0.85rem;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .palette-tab:hover { color: var(--text); }
+    .palette-tab.active {
+        color: var(--text);
+        border-color: var(--accent);
+        background: rgba(233,69,96,0.12);
+    }
+    .palette-items { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .palette-item {
+        background: var(--bg);
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 0.45rem 0.8rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .palette-item:hover { border-color: var(--accent); background: rgba(233,69,96,0.08); }
+
+    /* ── Actions ── */
+    .builder-actions {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        border-top: 1px solid var(--border-dim);
+        padding-top: 1rem;
+    }
+    .btn-primary {
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        color: #fff;
+        padding: 0.6rem 1.4rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: filter 0.15s;
+    }
+    .btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
+    .btn-primary:disabled { opacity: 0.5; cursor: default; }
+    .btn-secondary {
+        background: transparent;
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        color: var(--text-dim);
+        padding: 0.6rem 1.2rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+    }
+    .btn-secondary:hover { color: var(--text); border-color: var(--text); }
+
+    .total-time { font-size: 0.8rem; color: var(--text-dim); align-self: center; margin-left: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <h1><em>Playlists</em></h1>
+    <p class="sub">Build a show from your saved scenes, effects and sequences.</p>
+</div>
+
+<div class="pl-layout">
+
+    <!-- Left: saved playlists -->
+    <div class="pl-card">
+        <h2>Saved Playlists</h2>
+        <div id="saved-list"><p class="empty-state">Loading…</p></div>
+        <button id="btn-new" class="btn-secondary">&#43; New Playlist</button>
+    </div>
+
+    <!-- Right: builder -->
+    <div class="pl-card">
+        <div class="builder-head">
+            <span class="builder-title" id="builder-title">New Playlist</span>
+            <div class="toggle-row">
+                <label class="repeat-row">
+                    <input type="checkbox" id="pl-repeat" checked>
+                    Loop
+                </label>
+                <label class="repeat-row" title="Play the items in a different order each time">
+                    <input type="checkbox" id="pl-random">
+                    Randomize
+                </label>
+            </div>
+        </div>
+
+        <input type="text" id="pl-name" class="pl-input" placeholder="Playlist name…" maxlength="64">
+
+        <p class="random-note" id="random-note" hidden>
+            Shuffled on every play — the order below is just the running list.
+        </p>
+
+        <div id="item-list"><p class="empty-state">No items yet — add one below.</p></div>
+
+        <div class="palette">
+            <div class="palette-tabs">
+                <button class="palette-tab active" data-tab="scene">Scenes</button>
+                <button class="palette-tab" data-tab="effect">Effects</button>
+                <button class="palette-tab" data-tab="sequence">Sequences</button>
+                <button class="palette-tab" data-tab="pause">Pause</button>
+            </div>
+            <div class="palette-items" id="palette-items"></div>
+        </div>
+
+        <div class="builder-actions">
+            <button id="btn-save" class="btn-primary">Save Playlist</button>
+            <button id="btn-cancel" class="btn-secondary">Cancel</button>
+            <span class="total-time" id="total-time"></span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    'use strict';
+
+    async function apiFetch(url, method = 'GET', body = null) {
+        url = (window.APP_ROOT || '') + url;
+        const opts = { method, headers: { 'X-Requested-With': 'XMLHttpRequest' } };
+        if (body !== null) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        const resp = await fetch(url, opts);
+        if (!resp.ok) {
+            const b = await resp.json().catch(() => ({}));
+            throw new Error(b.error || `HTTP ${resp.status}`);
+        }
+        return resp.json();
+    }
+
+    function escHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+    }
+
+    const savedList  = document.getElementById('saved-list');
+    const itemList   = document.getElementById('item-list');
+    const paletteBox = document.getElementById('palette-items');
+    const nameInput  = document.getElementById('pl-name');
+    const repeatBox  = document.getElementById('pl-repeat');
+    const randomBox  = document.getElementById('pl-random');
+    const randomNote = document.getElementById('random-note');
+    const titleEl    = document.getElementById('builder-title');
+    const totalEl    = document.getElementById('total-time');
+    const btnSave    = document.getElementById('btn-save');
+
+    // Builder state. editingId is null for a new playlist, otherwise the id
+    // being replaced by the next save.
+    let editingId = null;
+    let items = [];
+
+    let scenes = [], presets = [], sequences = [];
+    let activeTab = 'scene';
+
+    const BADGE = { scene: 'Scene', effect: 'Effect', sequence: 'Sequence', pause: 'Pause' };
+    const DEFAULT_DURATION = { scene: 30, effect: 60, pause: 5 };
+
+    // ── Builder rendering ──────────────────────────────────────
+
+    function fmtTotal() {
+        // Sequence items run for their own length, which only FPP knows, so the
+        // total is a floor rather than an exact runtime.
+        let secs = 0, hasSeq = false;
+        items.forEach(i => {
+            if (i.item_type === 'sequence') { hasSeq = true; return; }
+            secs += Number(i.duration) || 0;
+        });
+        if (!items.length) return '';
+        const m = Math.floor(secs / 60), s = secs % 60;
+        const t = m ? `${m}m ${s}s` : `${s}s`;
+        return `${items.length} item${items.length === 1 ? '' : 's'} · ${hasSeq ? t + ' + sequences' : t}`;
+    }
+
+    function renderItems() {
+        totalEl.textContent = fmtTotal();
+        if (!items.length) {
+            itemList.innerHTML = '<p class="empty-state">No items yet — add one below.</p>';
+            return;
+        }
+        itemList.innerHTML = '';
+        items.forEach((item, idx) => {
+            const row = document.createElement('div');
+            row.className = 'item-row' + (item.missing ? ' missing' : '');
+
+            const durCell = item.item_type === 'sequence'
+                ? '<span class="item-dur-spacer"></span><span class="item-dur-unit">full</span>'
+                : `<input type="number" class="item-dur" min="1" max="86400" value="${Number(item.duration) || 1}"
+                          data-idx="${idx}" data-no-vkb aria-label="Duration in seconds">
+                   <span class="item-dur-unit">sec</span>`;
+
+            row.innerHTML = `
+                <span class="item-badge">${BADGE[item.item_type]}</span>
+                <span class="item-label" title="${escHtml(item.label)}">${escHtml(item.label)}${item.missing ? ' (deleted)' : ''}</span>
+                ${durCell}
+                <button class="item-btn up" data-idx="${idx}" ${idx === 0 ? 'disabled' : ''}
+                        aria-label="Move up">&#9650;</button>
+                <button class="item-btn down" data-idx="${idx}" ${idx === items.length - 1 ? 'disabled' : ''}
+                        aria-label="Move down">&#9660;</button>
+                <button class="item-btn del" data-idx="${idx}" aria-label="Remove item">&#10005;</button>
+            `;
+            itemList.appendChild(row);
+        });
+    }
+
+    itemList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.item-btn');
+        if (!btn) return;
+        const idx = Number(btn.dataset.idx);
+        if (btn.classList.contains('up') && idx > 0) {
+            [items[idx - 1], items[idx]] = [items[idx], items[idx - 1]];
+        } else if (btn.classList.contains('down') && idx < items.length - 1) {
+            [items[idx + 1], items[idx]] = [items[idx], items[idx + 1]];
+        } else if (btn.classList.contains('del')) {
+            items.splice(idx, 1);
+        } else {
+            return;
+        }
+        renderItems();
+    });
+
+    itemList.addEventListener('change', (e) => {
+        if (!e.target.classList.contains('item-dur')) return;
+        const idx = Number(e.target.dataset.idx);
+        let v = parseInt(e.target.value, 10);
+        if (!Number.isFinite(v) || v < 1) v = 1;
+        if (v > 86400) v = 86400;
+        items[idx].duration = v;
+        e.target.value = v;
+        totalEl.textContent = fmtTotal();
+    });
+
+    // ── Add palette ────────────────────────────────────────────
+
+    function renderPalette() {
+        if (activeTab === 'pause') {
+            paletteBox.innerHTML = '<button class="palette-item" data-kind="pause">&#43; Add a pause</button>';
+            return;
+        }
+        const src = activeTab === 'scene' ? scenes
+                  : activeTab === 'effect' ? presets
+                  : sequences;
+        if (!src.length) {
+            const what = activeTab === 'scene' ? 'scenes'
+                       : activeTab === 'effect' ? 'effect presets' : 'sequences';
+            paletteBox.innerHTML = `<p class="empty-state">No ${what} saved yet.</p>`;
+            return;
+        }
+        paletteBox.innerHTML = src.map(o => {
+            const isSeq = activeTab === 'sequence';
+            const label = isSeq ? o : o.name;
+            const attr = isSeq ? `data-name="${escHtml(o)}"` : `data-id="${o.id}"`;
+            return `<button class="palette-item" data-kind="${activeTab}" ${attr}>&#43; ${escHtml(label)}</button>`;
+        }).join('');
+    }
+
+    document.querySelector('.palette-tabs').addEventListener('click', (e) => {
+        const tab = e.target.closest('.palette-tab');
+        if (!tab) return;
+        activeTab = tab.dataset.tab;
+        document.querySelectorAll('.palette-tab').forEach(t =>
+            t.classList.toggle('active', t === tab));
+        renderPalette();
+    });
+
+    paletteBox.addEventListener('click', (e) => {
+        const btn = e.target.closest('.palette-item');
+        if (!btn) return;
+        const kind = btn.dataset.kind;
+
+        if (kind === 'pause') {
+            items.push({ item_type: 'pause', duration: DEFAULT_DURATION.pause, label: 'Pause' });
+        } else if (kind === 'sequence') {
+            items.push({ item_type: 'sequence', ref_name: btn.dataset.name, label: btn.dataset.name });
+        } else {
+            const id = Number(btn.dataset.id);
+            const src = kind === 'scene' ? scenes : presets;
+            const obj = src.find(o => o.id === id);
+            if (!obj) return;
+            items.push({ item_type: kind, ref_id: id, duration: DEFAULT_DURATION[kind], label: obj.name });
+        }
+        renderItems();
+    });
+
+    // ── Saved playlists ────────────────────────────────────────
+
+    function renderSaved(list) {
+        if (!list.length) {
+            savedList.innerHTML = '<p class="empty-state">No playlists yet.</p>';
+            return;
+        }
+        savedList.innerHTML = '';
+        list.forEach(pl => {
+            const row = document.createElement('div');
+            row.className = 'saved-row' + (pl.id === editingId ? ' editing' : '');
+            const n = pl.items.length;
+            const broken = pl.items.filter(i => i.missing).length;
+            const meta = `${n} item${n === 1 ? '' : 's'}${pl.repeat ? ' · loops' : ''}` +
+                         (pl.random ? ' · shuffled' : '') +
+                         (broken ? ` · ${broken} missing` : '');
+            row.innerHTML = `
+                <button class="saved-main" data-act="play" data-name="${escHtml(pl.name)}">
+                    <span class="saved-name">${escHtml(pl.name)}</span>
+                    <span class="saved-meta">${escHtml(meta)}</span>
+                </button>
+                <button class="saved-act" data-act="edit" data-id="${pl.id}" aria-label="Edit ${escHtml(pl.name)}">&#9998;</button>
+                <button class="saved-act del" data-act="del" data-id="${pl.id}"
+                        data-name="${escHtml(pl.name)}" aria-label="Delete ${escHtml(pl.name)}">&#10005;</button>
+            `;
+            savedList.appendChild(row);
+        });
+    }
+
+    let saved = [];
+
+    async function loadSaved() {
+        try {
+            saved = await apiFetch('/api/custom-playlists');
+            renderSaved(saved);
+        } catch (err) {
+            savedList.innerHTML = `<p class="empty-state">Error: ${escHtml(err.message)}</p>`;
+        }
+    }
+
+    savedList.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-act]');
+        if (!btn) return;
+        const act = btn.dataset.act;
+
+        if (act === 'play') {
+            try {
+                await apiFetch(`/api/playlists/${encodeURIComponent(btn.dataset.name)}/play`, 'POST', {});
+                showToast(`Playing "${btn.dataset.name}"`, 'success');
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+            return;
+        }
+
+        const id = Number(btn.dataset.id);
+        if (act === 'edit') {
+            const pl = saved.find(p => p.id === id);
+            if (pl) loadIntoBuilder(pl);
+            return;
+        }
+
+        if (act === 'del') {
+            if (!confirm(`Delete playlist "${btn.dataset.name}"?`)) return;
+            try {
+                await apiFetch(`/api/custom-playlists/${id}`, 'DELETE');
+                if (editingId === id) resetBuilder();
+                await loadSaved();
+                showToast('Playlist deleted', 'success');
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+    });
+
+    // ── Builder mode ───────────────────────────────────────────
+
+    function loadIntoBuilder(pl) {
+        editingId = pl.id;
+        nameInput.value = pl.name;
+        repeatBox.checked = !!pl.repeat;
+        randomBox.checked = !!pl.random;
+        randomNote.hidden = !pl.random;
+        items = pl.items.map(i => ({
+            item_type: i.item_type, ref_id: i.ref_id, ref_name: i.ref_name,
+            duration: i.duration, label: i.label, missing: i.missing,
+        }));
+        titleEl.textContent = `Editing "${pl.name}"`;
+        btnSave.textContent = 'Save Changes';
+        renderItems();
+        renderSaved(saved);
+        nameInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function resetBuilder() {
+        editingId = null;
+        items = [];
+        nameInput.value = '';
+        repeatBox.checked = true;
+        randomBox.checked = false;
+        randomNote.hidden = true;
+        titleEl.textContent = 'New Playlist';
+        btnSave.textContent = 'Save Playlist';
+        renderItems();
+        renderSaved(saved);
+    }
+
+    randomBox.addEventListener('change', () => {
+        randomNote.hidden = !randomBox.checked;
+    });
+
+    document.getElementById('btn-new').addEventListener('click', resetBuilder);
+    document.getElementById('btn-cancel').addEventListener('click', resetBuilder);
+
+    btnSave.addEventListener('click', async () => {
+        const name = nameInput.value.trim();
+        if (!name) {
+            showToast('Give the playlist a name first', 'error');
+            nameInput.focus();
+            return;
+        }
+        if (!items.length) {
+            showToast('Add at least one item', 'error');
+            return;
+        }
+        if (items.some(i => i.missing)) {
+            showToast('Remove the deleted items before saving', 'error');
+            return;
+        }
+
+        const payload = {
+            name,
+            repeat: repeatBox.checked,
+            random: randomBox.checked,
+            items: items.map(i => ({
+                item_type: i.item_type,
+                ref_id: i.ref_id,
+                ref_name: i.ref_name,
+                duration: i.duration,
+            })),
+        };
+
+        btnSave.disabled = true;
+        try {
+            if (editingId === null) {
+                await apiFetch('/api/custom-playlists', 'POST', payload);
+                showToast(`Playlist "${name}" saved`, 'success');
+            } else {
+                await apiFetch(`/api/custom-playlists/${editingId}`, 'PUT', payload);
+                showToast(`Playlist "${name}" updated`, 'success');
+            }
+            await loadSaved();
+            resetBuilder();
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            btnSave.disabled = false;
+        }
+    });
+
+    // ── Init ───────────────────────────────────────────────────
+
+    (async function init() {
+        const [s, p, q] = await Promise.all([
+            apiFetch('/api/scenes').catch(() => []),
+            apiFetch('/api/effects/presets').catch(() => []),
+            apiFetch('/api/sequences').catch(() => ({ sequences: [] })),
+        ]);
+        scenes = Array.isArray(s) ? s : [];
+        presets = Array.isArray(p) ? p : [];
+        sequences = (q && q.sequences) || [];
+        renderPalette();
+        renderItems();
+        await loadSaved();
+    })();
+})();
+</script>
+{% endblock %}

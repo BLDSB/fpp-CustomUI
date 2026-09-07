@@ -42,10 +42,48 @@
 
     /* ── Playlist grid ── */
     #playlist-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+    }
+    .pl-group-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
         gap: 0.65rem;
     }
+    /* Scene and effect playlists are grouped behind a toggle so the built
+       playlists stay at the top of the page as the list grows. */
+    .pl-group-head {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.35rem 0;
+        cursor: pointer;
+        text-align: left;
+        transition: color 0.15s;
+    }
+    .pl-group-head:hover { color: var(--text); }
+    .pl-group-head .caret { font-size: 0.7rem; transition: transform 0.15s; }
+    .pl-group.collapsed .caret { transform: rotate(-90deg); }
+    .pl-group.collapsed .pl-group-grid { display: none; }
+    /* Sequences is a top-level section rather than a sub-group of the playlist
+       list, so it carries its own spacing. */
+    #sequence-section { margin-top: 2rem; }
+    .pl-group-count {
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
+        opacity: 0.7;
+    }
+    .pl-group-rule { flex: 1; height: 1px; background: var(--border-dim); }
     .playlist-card {
         background: var(--surface);
         border: 1px solid var(--border-dim);
@@ -152,6 +190,59 @@
         display: none;
     }
 
+    /* ── Schedule preview card ── */
+    #schedule-card {
+        background: var(--surface);
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius);
+        padding: 0.85rem 1.1rem;
+        margin-bottom: 1.75rem;
+        backdrop-filter: var(--blur);
+        -webkit-backdrop-filter: var(--blur);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 0.7rem 1.6rem;
+    }
+    .sched-seg {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        min-width: 0;
+    }
+    .sched-seg + .sched-seg {
+        border-left: 1px solid var(--border-dim);
+        padding-left: 1.6rem;
+    }
+    .sched-seg-next { flex: 1 1 240px; }
+    .sched-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--text-dim);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+    .sched-value {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--text);
+        white-space: nowrap;
+    }
+    .sched-seg-next .sched-value { font-weight: 500; white-space: normal; }
+    .sched-value.dim { color: var(--text-dim); font-weight: 500; }
+
+    @media (max-width: 700px) {
+        #schedule-card {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem 1rem;
+        }
+        .sched-seg + .sched-seg { border-left: none; padding-left: 0; }
+        .sched-seg-next { grid-column: 1 / -1; }
+        .sched-value { white-space: normal; }
+    }
+
     /* ── Loop toggle pill ── */
     .toggle-pill {
         background: rgba(46,204,113,0.15);
@@ -186,6 +277,26 @@
     <span id="brightness-status"></span>
 </div>
 
+<!-- Schedule preview -->
+<div id="schedule-card">
+    <div class="sched-seg">
+        <span class="sched-label">Scheduler Status</span>
+        <span class="sched-value" id="sched-status">…</span>
+    </div>
+    <div class="sched-seg">
+        <span class="sched-label">Playlist Started At</span>
+        <span class="sched-value dim" id="sched-started">—</span>
+    </div>
+    <div class="sched-seg">
+        <span class="sched-label" id="sched-stop-label">Graceful Stop At</span>
+        <span class="sched-value dim" id="sched-stop">—</span>
+    </div>
+    <div class="sched-seg sched-seg-next">
+        <span class="sched-label">Next Playlist</span>
+        <span class="sched-value dim" id="sched-next">—</span>
+    </div>
+</div>
+
 <!-- Status banner -->
 <div id="status-banner">
     <span id="status-text"><span class="label">Status:</span> loading…</span>
@@ -203,11 +314,14 @@
 <div id="playlist-grid"><p class="empty-state">Loading playlists…</p></div>
 
 <!-- Sequence list (hidden until sequences are confirmed present) -->
-<div id="sequence-section" style="display:none;">
-    <div class="section-header" style="margin-top:2rem;">
-        <h2>Sequences</h2>
-    </div>
-    <div id="sequence-grid"></div>
+<div id="sequence-section" class="pl-group" data-group="sequences" style="display:none;">
+    <button class="pl-group-head" aria-expanded="true">
+        <span class="caret">&#9660;</span>
+        <span>Sequences</span>
+        <span class="pl-group-count" id="sequence-count"></span>
+        <span class="pl-group-rule"></span>
+    </button>
+    <div id="sequence-grid" class="pl-group-grid"></div>
 </div>
 {% endblock %}
 
@@ -220,6 +334,13 @@
     const statusText = document.getElementById('status-text');
     const btnStop = document.getElementById('btn-stop');
     const btnLoop = document.getElementById('btn-loop');
+    const schedEls = {
+        status:    document.getElementById('sched-status'),
+        started:   document.getElementById('sched-started'),
+        stopLabel: document.getElementById('sched-stop-label'),
+        stop:      document.getElementById('sched-stop'),
+        next:      document.getElementById('sched-next'),
+    };
     let currentPlaylist = null;
     let statusPollTimer = null;
     // Scene and Effect playlists are applied directly by Flask (overlay models),
@@ -227,6 +348,7 @@
     let activeOverlay = null;      // playlist name, e.g. "Scene - Warm" / "Effect - Twinkle"
     let activeOverlayKind = '';    // "Scene" or "Effect"
     let hasSequences = false;
+    let builtNames = new Set();   // playlists built on the Playlists page
 
     // ── Loop state (persisted in localStorage) ─────────────────────
     let loopEnabled = localStorage.getItem('fpp-loop') !== 'false'; // default ON
@@ -263,18 +385,79 @@
     }
 
     // ── Render playlists ───────────────────────────────────────
+
+    // Scene and effect playlists are generated one per saved item, so they are
+    // grouped separately to keep the built playlists at the top of the page.
+    // The prefixes match what /api/playlists/<name>/play keys on.
+    function cardHtml(name, label) {
+        return `
+            <div class="playlist-card${name === currentPlaylist ? ' active-playlist' : ''}" data-name="${escHtml(name)}">
+                <span class="playlist-name" title="${escHtml(name)}">${escHtml(label)}</span>
+                <button class="btn-play" data-name="${escHtml(name)}" aria-label="Play ${escHtml(name)}">&#9654; Play</button>
+            </div>`;
+    }
+
+    function groupHtml(key, title, entries, collapsed) {
+        if (!entries.length) return '';
+        return `
+            <div class="pl-group${collapsed ? ' collapsed' : ''}" data-group="${key}">
+                <button class="pl-group-head" aria-expanded="${!collapsed}">
+                    <span class="caret">&#9660;</span>
+                    <span>${escHtml(title)}</span>
+                    <span class="pl-group-count">(${entries.length})</span>
+                    <span class="pl-group-rule"></span>
+                </button>
+                <div class="pl-group-grid">
+                    ${entries.map(e => cardHtml(e.name, e.label)).join('')}
+                </div>
+            </div>`;
+    }
+
+    function isCollapsed(key, count) {
+        const stored = localStorage.getItem('plGroup:' + key);
+        if (stored !== null) return stored === '1';
+        return count > 6;   // only fold away a group once it is actually long
+    }
+
     function renderPlaylists(names) {
         if (!names.length) {
-            grid.innerHTML = '<p class="empty-state">No playlists found on FPP.</p>';
+            grid.innerHTML = '<p class="empty-state">No playlists found on the controller.</p>';
             return;
         }
-        grid.innerHTML = names.map(name => `
-            <div class="playlist-card${name === currentPlaylist ? ' active-playlist' : ''}" data-name="${escHtml(name)}">
-                <span class="playlist-name" title="${escHtml(name)}">${escHtml(name)}</span>
-                <button class="btn-play" data-name="${escHtml(name)}" aria-label="Play ${escHtml(name)}">&#9654; Play</button>
-            </div>
-        `).join('');
+        const built = [], scenes = [], effects = [], other = [];
+        names.forEach(name => {
+            if (builtNames.has(name)) built.push({ name, label: name });
+            else if (name.startsWith('Scene - ')) scenes.push({ name, label: name.slice(8) });
+            else if (name.startsWith('Effect - ')) effects.push({ name, label: name.slice(9) });
+            else other.push({ name, label: name });
+        });
+
+        let html = '';
+        if (built.length) {
+            html += `<div class="pl-group" data-group="built"><div class="pl-group-grid">${
+                built.map(e => cardHtml(e.name, e.label)).join('')}</div></div>`;
+        }
+        if (other.length) {
+            html += `<div class="pl-group" data-group="other"><div class="pl-group-grid">${
+                other.map(e => cardHtml(e.name, e.label)).join('')}</div></div>`;
+        }
+        html += groupHtml('scenes', 'Scenes', scenes, isCollapsed('scenes', scenes.length));
+        html += groupHtml('effects', 'Effects', effects, isCollapsed('effects', effects.length));
+        grid.innerHTML = html;
     }
+
+    // On document rather than the playlist grid: the Sequences group sits
+    // outside it but toggles the same way.
+    document.addEventListener('click', (e) => {
+        const head = e.target.closest('.pl-group-head');
+        if (!head) return;
+        const group = head.closest('.pl-group');
+        const nowCollapsed = group.classList.toggle('collapsed');
+        head.setAttribute('aria-expanded', String(!nowCollapsed));
+        try {
+            localStorage.setItem('plGroup:' + group.dataset.group, nowCollapsed ? '1' : '0');
+        } catch { /* private browsing — the grouping still works, it just won't persist */ }
+    });
 
     function escHtml(str) {
         return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -283,7 +466,11 @@
     // ── Load playlists ─────────────────────────────────────────
     async function loadPlaylists() {
         try {
-            const data = await apiFetch('/api/playlists');
+            const [data, built] = await Promise.all([
+                apiFetch('/api/playlists'),
+                apiFetch('/api/custom-playlists').catch(() => []),
+            ]);
+            builtNames = new Set((built || []).map(p => p.name));
             renderPlaylists((data.playlists || []).filter(p => p !== 'Turn Off Lights' && (!hasSequences ? p !== 'Current-Sequence' : true)));
         } catch (err) {
             grid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
@@ -291,10 +478,65 @@
         }
     }
 
+    // ── Schedule preview (mirrors FPP's own scheduler bar) ─────
+    // FPP pads its date strings ("Mon Sep  7"), so collapse whitespace first.
+    const tidy = t => String(t ?? '').replace(/\s+/g, ' ').trim();
+
+    function setSched(el, text, dim) {
+        el.textContent = text;
+        el.classList.toggle('dim', !!dim);
+    }
+
+    function renderScheduler(s) {
+        const sch = s.scheduler || {};
+        const cur = sch.currentPlaylist || {};
+        const curName = tidy(cur.playlistName);
+        const rawState = tidy(sch.status).toLowerCase();
+
+        let state;
+        if (sch.enabled !== undefined && Number(sch.enabled) === 0) {
+            state = 'Disabled';
+        } else if (rawState === 'playing' && curName) {
+            state = `Playing '${curName}'`;
+        } else if (rawState) {
+            state = rawState.charAt(0).toUpperCase() + rawState.slice(1);
+        } else {
+            state = 'Idle';
+        }
+        setSched(schedEls.status, state, state === 'Idle' || state === 'Disabled');
+
+        const started = tidy(cur.actualStartTimeStr);
+        setSched(schedEls.started, started || '—', !started);
+
+        // FPP labels the stop by its type: Graceful / Hard Stop / Immediate
+        // — trim its trailing "Stop" so "Hard Stop" reads "Hard Stop At".
+        const stopType = tidy(cur.stopTypeStr).replace(/\s*stop$/i, '') || 'Graceful';
+        schedEls.stopLabel.textContent = `${stopType} Stop At`;
+        const stopAt = tidy(cur.scheduledEndTimeStr);
+        setSched(schedEls.stop, stopAt || '—', !stopAt);
+
+        // FPP 9 reports scheduler.nextPlaylist; older builds only next_playlist.
+        const nx = sch.nextPlaylist || {};
+        const nextName = tidy(nx.playlistName) || tidy(s.next_playlist?.playlist);
+        const nextTime = tidy(nx.scheduledStartTimeStr) || tidy(s.next_playlist?.start_time);
+        if (nextName) {
+            setSched(schedEls.next, `'${nextName}'${nextTime ? ` on ${nextTime}` : ''}`, false);
+        } else {
+            setSched(schedEls.next, 'None scheduled', true);
+        }
+    }
+
+    function schedulerUnavailable() {
+        setSched(schedEls.status, 'Unavailable', true);
+        schedEls.stopLabel.textContent = 'Graceful Stop At';
+        [schedEls.started, schedEls.stop, schedEls.next].forEach(el => setSched(el, '—', true));
+    }
+
     // ── Poll FPP status ────────────────────────────────────────
     async function pollStatus() {
         try {
             const s = await apiFetch('/api/fppd/status');
+            renderScheduler(s);
             const mode = s.mode_name || s.status || 'unknown';
             const rawPlaylist = s.current_playlist?.playlist || '';
             const isTempSeq = rawPlaylist === 'Current-Sequence';
@@ -329,7 +571,8 @@
                 card.classList.toggle('active-playlist', card.dataset.seqname === currentPlaylist);
             });
         } catch {
-            statusText.innerHTML = '<span class="label">Status:</span> <span style="color:#a0a0b0">FPP unreachable</span>';
+            statusText.innerHTML = '<span class="label">Status:</span> <span style="color:#a0a0b0">Controller unreachable</span>';
+            schedulerUnavailable();
         }
     }
 
@@ -401,6 +644,12 @@
             return;
         }
         section.style.display = '';
+
+        document.getElementById('sequence-count').textContent = `(${names.length})`;
+        const collapsed = isCollapsed('sequences', names.length);
+        section.classList.toggle('collapsed', collapsed);
+        section.querySelector('.pl-group-head').setAttribute('aria-expanded', String(!collapsed));
+
         seqGrid.innerHTML = names.map(name => `
             <div class="playlist-card" data-seqname="${escHtml(name)}">
                 <span class="playlist-name" title="${escHtml(name)}">${escHtml(name)}</span>
@@ -475,7 +724,7 @@
             status.textContent = 'Saved';
             setTimeout(() => { status.style.display = 'none'; }, 1500);
         } catch (e) {
-            status.textContent = 'Error — FPP unreachable';
+            status.textContent = 'Error — controller unreachable';
             setTimeout(() => { status.style.display = 'none'; }, 3000);
         }
     }

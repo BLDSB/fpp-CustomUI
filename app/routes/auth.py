@@ -91,17 +91,12 @@ def _client_is_local():
     return ip.is_private or ip.is_loopback or ip.is_link_local
 
 
-def _persist_pin(config_key, new_pin, label="PIN"):
-    """Hash a 4-digit PIN, write it to .env, and update the live config.
+def write_env_key(config_key, value):
+    """Write one key to .env and update the live config.
 
-    Returns None on success, or an (error_message, http_status) tuple.
+    Returns None on success, or an error string. Shared with the backup
+    restore, which replays already-hashed secrets rather than raw PINs.
     """
-    new_pin = str(new_pin).strip()
-    if not new_pin.isdigit() or len(new_pin) != 4:
-        return (f"{label} must be exactly 4 digits.", 400)
-
-    new_hash = bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
-
     env_path = os.path.normpath(os.path.join(current_app.root_path, "..", ".env"))
     # Atomic update: edit a copy, then rename over the original, so a crash or
     # full disk mid-write can't leave a truncated .env (which would wipe every
@@ -114,7 +109,7 @@ def _persist_pin(config_key, new_pin, label="PIN"):
                 shutil.copy2(env_path, tmp_path)
             else:
                 open(tmp_path, "w").close()
-            set_key(tmp_path, config_key, new_hash, quote_mode="never")
+            set_key(tmp_path, config_key, value, quote_mode="never")
             os.chmod(tmp_path, 0o600)  # .env holds secrets — owner-only
             os.replace(tmp_path, env_path)
     except Exception as exc:
@@ -123,9 +118,25 @@ def _persist_pin(config_key, new_pin, label="PIN"):
             os.remove(tmp_path)
         except OSError:
             pass
-        return ("Could not save PIN — is the .env file writable?", 500)
+        return "Could not write to the .env file — is it writable?"
 
-    current_app.config[config_key] = new_hash
+    current_app.config[config_key] = value
+    return None
+
+
+def _persist_pin(config_key, new_pin, label="PIN"):
+    """Hash a 4-digit PIN, write it to .env, and update the live config.
+
+    Returns None on success, or an (error_message, http_status) tuple.
+    """
+    new_pin = str(new_pin).strip()
+    if not new_pin.isdigit() or len(new_pin) != 4:
+        return (f"{label} must be exactly 4 digits.", 400)
+
+    new_hash = bcrypt.hashpw(new_pin.encode("utf-8"), bcrypt.gensalt()).decode()
+    error = write_env_key(config_key, new_hash)
+    if error:
+        return ("Could not save PIN — is the .env file writable?", 500)
     return None
 
 

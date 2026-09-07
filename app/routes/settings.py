@@ -12,8 +12,8 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from app import db
 from app.auth_utils import login_required
 from app.models import (
-    OVERLAY_MODELS, AppSetting, ColorButton, EffectPreset, SavedColor, Scene,
-    SceneZone, Zone, ZoneLayout, get_all_zones,
+    OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
+    EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, get_all_zones,
 )
 from app import overlay_layout
 from app import ui_path as ui_path_mod
@@ -27,7 +27,8 @@ _ALLOWED_KEYS = {
     *{f"genius_pro_url_{i}" for i in range(1, 9)},
     "alert_enabled", "alert_smtp_host", "alert_smtp_port",
     "alert_smtp_user", "alert_smtp_pass",
-    "alert_email_from", "alert_email_to", "alert_delay_minutes",
+    "alert_email_from", "alert_delay_minutes",
+    "alert_email_to", "alert_email_to_2", "alert_email_to_3",
 }
 _URL_RE    = re.compile(r"^https?://", re.IGNORECASE)
 _COLOR_RE  = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -468,7 +469,7 @@ def create_overlay_models():
         subprocess.run(["sudo", "systemctl", "restart", "fppd"], timeout=15, check=True)
     except Exception as exc:
         current_app.logger.warning("Could not restart fppd: %s", exc)
-        return jsonify({"ok": True, "warning": "Models written, but fppd did not restart — restart FPP manually."})
+        return jsonify({"ok": True, "warning": "Models written, but the player did not restart — restart the controller manually."})
 
     return jsonify({"ok": True})
 
@@ -502,13 +503,15 @@ def genius_reboot():
     return jsonify({"ok": True})
 
 
-@settings_bp.post("/api/system/reboot")
-@login_required
-def system_reboot():
-    """Reboot the Raspberry Pi this plugin runs on.
+def trigger_reboot(delay=2, reason="the settings page"):
+    """Reboot the Raspberry Pi this plugin runs on, after `delay` seconds.
 
     systemd tears the service down the moment the command lands, so the reboot
-    is fired from a background thread and this response gets out first.
+    is fired from a background thread and the caller's response gets out first.
+    Returns None once the reboot is scheduled, or an error string.
+
+    Shared with the backup restore, which reboots at the end so FPP picks up
+    the configuration it was just handed.
     """
     # Check passwordless sudo up front — otherwise the thread would fail
     # silently and the page would claim a reboot that never happened.
@@ -516,16 +519,14 @@ def system_reboot():
         probe = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=5)
     except Exception as exc:
         current_app.logger.error("Could not check sudo before reboot: %s", exc)
-        return jsonify({"error": f"Could not run the reboot command: {exc}"}), 500
+        return f"Could not run the reboot command: {exc}"
     if probe.returncode != 0:
-        return jsonify({
-            "error": "This user cannot reboot without a password — "
-                     "reboot from the FPP menu or over SSH.",
-        }), 500
+        return ("This user cannot reboot without a password — "
+                "reboot from the controller's own menu or over SSH.")
 
     def _reboot():
-        # Long enough for the JSON response to reach the browser.
-        time.sleep(2)
+        # Long enough for the response to reach the browser.
+        time.sleep(delay)
         try:
             subprocess.run(["sudo", "-n", "systemctl", "reboot"], timeout=20)
         except Exception:
@@ -534,18 +535,30 @@ def system_reboot():
             except Exception:
                 pass
 
-    current_app.logger.warning("Reboot requested from the settings page")
+    current_app.logger.warning("Reboot requested from %s", reason)
     threading.Thread(target=_reboot, daemon=True).start()
+    return None
+
+
+@settings_bp.post("/api/system/reboot")
+@login_required
+def system_reboot():
+    error = trigger_reboot()
+    if error:
+        return jsonify({"error": error}), 500
     return jsonify({"ok": True})
 
 
 # ── Backup / Restore ──────────────────────────────────────────────────────────
 
-@settings_bp.get("/api/backup")
-@login_required
-def download_backup():
-    data = {
-        "version": 3,
+def build_ui_payload():
+    """This plugin's database as the version-4 backup payload.
+
+    Shared with the full-archive builder in app/fpp_backup.py, which embeds
+    the same document at ui/backup.json so one restore path handles both.
+    """
+    return {
+        "version": 4,
         "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
         "settings": {s.key: s.value for s in AppSetting.query.all()},
         "zones": [
@@ -566,28 +579,32 @@ def download_backup():
         ],
         "scenes": [s.to_dict() for s in Scene.query.all()],
         "effect_presets": [p.to_dict() for p in EffectPreset.query.order_by(EffectPreset.id).all()],
+        "custom_playlists": [
+            c.to_dict() for c in CustomPlaylist.query.order_by(CustomPlaylist.id).all()
+        ],
     }
+
+
+@settings_bp.get("/api/backup")
+@login_required
+def download_backup():
     ts = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     return Response(
-        json.dumps(data, indent=2),
+        json.dumps(build_ui_payload(), indent=2),
         mimetype="application/json",
         headers={"Content-Disposition": f"attachment; filename=fpp-ui-backup-{ts}.json"},
     )
 
 
-@settings_bp.post("/api/restore")
-@login_required
-def restore_backup():
-    file = request.files.get("file")
-    if not file:
-        return jsonify({"error": "No file provided"}), 400
-    try:
-        data = json.loads(file.read())
-    except Exception:
-        return jsonify({"error": "Invalid JSON file"}), 400
+def apply_ui_backup(data):
+    """Restore this plugin's database from a version-4 payload.
 
-    if data.get("version") not in (1, 2, 3):
-        return jsonify({"error": "Unsupported backup version"}), 400
+    Returns None on success or an error string; the whole thing is one
+    transaction, so a failure at commit leaves the database untouched.
+    Shared with the full-archive restore in app/routes/backup.py.
+    """
+    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3, 4):
+        return "Unsupported backup version"
 
     # Settings — merge (update existing keys, add new ones)
     for key, value in (data.get("settings") or {}).items():
@@ -676,6 +693,8 @@ def restore_backup():
     Scene.query.delete()
     db.session.flush()
 
+    from app.routes.custom_playlists import _write_custom_playlist
+    from app.routes.effects import _write_effect_playlist
     from app.routes.scenes import _write_scene_files
     seen_scene_names = set()
     for s in (data.get("scenes") or []):
@@ -728,21 +747,118 @@ def restore_backup():
         effect_name = str(p.get("effect_name") or "").strip()[:128]
         if not name or not effect_name:
             continue
-        db.session.add(EffectPreset(
+        new_preset = EffectPreset(
             name=name,
             effect_name=effect_name,
             models_json=json.dumps(_as_list(p.get("models"))),
             args_json=json.dumps(_as_list(p.get("args"))),
-            multisync=bool(p.get("multisync", False)),
-            systems_json=json.dumps(_as_list(p.get("systems"))),
-        ))
+        )
+        db.session.add(new_preset)
+        db.session.flush()
+        try:
+            _write_effect_playlist(new_preset)
+        except Exception as exc:
+            current_app.logger.warning("Could not write effect playlist for '%s': %s", name, exc)
+
+    # Custom playlists — replace entirely. Items are rebuilt by name lookup
+    # because scene and preset ids are reassigned by the wipe-and-recreate above.
+    scenes_by_name = {s.name: s.id for s in Scene.query.all()}
+    presets_by_name = {p.name: p.id for p in EffectPreset.query.all()}
+
+    CustomPlaylistItem.query.delete()
+    CustomPlaylist.query.delete()
+    db.session.flush()
+
+    for c in (data.get("custom_playlists") or []):
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name") or "").strip()[:64]
+        if not name or "/" in name or "\\" in name or ".." in name:
+            continue
+        new_cp = CustomPlaylist(
+            name=name,
+            repeat=bool(c.get("repeat", True)),
+            random=bool(c.get("random", False)),
+        )
+        restored_items = []
+
+        for pos, raw in enumerate(c.get("items") or []):
+            if not isinstance(raw, dict):
+                continue
+            item_type = raw.get("item_type")
+            if item_type not in CustomPlaylistItem.ITEM_TYPES:
+                continue
+            try:
+                duration = max(1, min(int(raw.get("duration") or 30), 86400))
+            except (TypeError, ValueError):
+                duration = 30
+
+            ref_id, ref_name = None, None
+            if item_type in ("scene", "effect"):
+                lookup = scenes_by_name if item_type == "scene" else presets_by_name
+                ref_id = lookup.get(str(raw.get("label") or ""))
+                if ref_id is None:
+                    current_app.logger.warning(
+                        "Restore: playlist '%s' references missing %s %r — skipping item",
+                        name, item_type, raw.get("label"),
+                    )
+                    continue
+            elif item_type == "sequence":
+                ref_name = str(raw.get("ref_name") or "").strip()[:255]
+                if not ref_name:
+                    continue
+
+            restored_items.append(CustomPlaylistItem(
+                position=pos, item_type=item_type,
+                ref_id=ref_id, ref_name=ref_name, duration=duration,
+            ))
+
+        # Assign through the relationship so _write_custom_playlist sees the
+        # items without depending on a lazy reload mid-transaction.
+        new_cp.items = restored_items
+        db.session.add(new_cp)
+        db.session.flush()
+        try:
+            _write_custom_playlist(new_cp)
+        except Exception as exc:
+            current_app.logger.warning("Could not write custom playlist '%s': %s", name, exc)
 
     try:
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Backup restore failed at commit")
-        return jsonify({"error": f"Restore failed — no changes applied: {exc}"}), 500
+        return f"Restore failed — no changes applied: {exc}"
+    return None
+
+
+@settings_bp.post("/api/restore")
+@login_required
+def restore_backup():
+    """Restore from a backup file.
+
+    Accepts both the plain-JSON backups this endpoint has always taken and
+    the newer full-archive zip, so an operator can drop either on the same
+    button without having to know which one they have.
+    """
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file provided"}), 400
+
+    raw = file.read()
+    if raw[:2] == b"PK":
+        from app.routes.backup import apply_archive_bytes
+        return apply_archive_bytes(raw)
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return jsonify({"error": "Invalid JSON file"}), 400
+
+    error = apply_ui_backup(data)
+    if error:
+        status = 400 if error == "Unsupported backup version" else 500
+        return jsonify({"error": error}), status
     return jsonify({"ok": True})
 
 
@@ -774,7 +890,7 @@ def set_ui_path():
 @login_required
 def test_alert_email():
     from app.alert_monitor import send_test_email
-    ok, err = send_test_email(current_app._get_current_object())
+    ok, detail = send_test_email(current_app._get_current_object())
     if ok:
-        return jsonify({"ok": True})
-    return jsonify({"error": err}), 502
+        return jsonify({"ok": True, "sent_to": detail})
+    return jsonify({"error": detail}), 502

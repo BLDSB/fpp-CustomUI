@@ -164,8 +164,6 @@ class EffectPreset(db.Model):
     effect_name = db.Column(db.String(128), nullable=False)
     models_json = db.Column(db.Text, nullable=False, default="[]")
     args_json   = db.Column(db.Text, nullable=False, default="[]")
-    multisync   = db.Column(db.Boolean, nullable=False, default=False)
-    systems_json = db.Column(db.Text, nullable=False, default="[]")
 
     def to_dict(self):
         return {
@@ -176,8 +174,84 @@ class EffectPreset(db.Model):
             "effect_name": self.effect_name,
             "models": _loads_list(self.models_json),
             "args": _loads_list(self.args_json),
-            "multisync": self.multisync,
-            "systems": _loads_list(self.systems_json),
+        }
+
+
+class CustomPlaylist(db.Model):
+    """A user-built playlist: an ordered mix of scenes, effects, sequences and pauses.
+
+    Kept here as well as on FPP because FPP's copy is derived output — it gets
+    rewritten from these rows on every save, on restore, and on startup.
+    """
+    __tablename__ = "custom_playlists"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(64), nullable=False, unique=True)
+    repeat = db.Column(db.Boolean, nullable=False, default=True)
+    # Shuffled by us, not by FPP: FPP's own "random" shuffles playlist entries
+    # individually, which would separate each scene's URL command from the pause
+    # that holds it. See _playlist_entries in app/routes/custom_playlists.py.
+    random = db.Column(db.Boolean, nullable=False, default=False)
+    items = db.relationship(
+        "CustomPlaylistItem",
+        backref="playlist",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="CustomPlaylistItem.position",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "repeat": self.repeat,
+            "random": self.random,
+            "items": [i.to_dict() for i in sorted(self.items, key=lambda i: i.position)],
+        }
+
+
+class CustomPlaylistItem(db.Model):
+    __tablename__ = "custom_playlist_items"
+
+    ITEM_TYPES = ("scene", "effect", "sequence", "pause")
+
+    id = db.Column(db.Integer, primary_key=True)
+    playlist_id = db.Column(
+        db.Integer, db.ForeignKey("custom_playlists.id"), nullable=False
+    )
+    position = db.Column(db.Integer, nullable=False, default=0)
+    item_type = db.Column(db.String(16), nullable=False)
+    ref_id = db.Column(db.Integer, nullable=True)      # Scene / EffectPreset id
+    ref_name = db.Column(db.String(255), nullable=True)  # .fseq filename
+    duration = db.Column(db.Integer, nullable=False, default=30)
+
+    def resolve(self):
+        """Display label plus whether the thing this points at still exists.
+
+        A scene or preset can be deleted out from under a playlist, so this
+        never raises — the builder shows a broken row instead of erroring.
+        """
+        if self.item_type == "scene":
+            row = db.session.get(Scene, self.ref_id) if self.ref_id else None
+            return (row.name, False) if row else (f"Scene #{self.ref_id}", True)
+        if self.item_type == "effect":
+            row = db.session.get(EffectPreset, self.ref_id) if self.ref_id else None
+            return (row.name, False) if row else (f"Effect #{self.ref_id}", True)
+        if self.item_type == "sequence":
+            return (self.ref_name or "", False)
+        return ("Pause", False)
+
+    def to_dict(self):
+        label, missing = self.resolve()
+        return {
+            "id": self.id,
+            "position": self.position,
+            "item_type": self.item_type,
+            "ref_id": self.ref_id,
+            "ref_name": self.ref_name,
+            "duration": self.duration,
+            "label": label,
+            "missing": missing,
         }
 
 

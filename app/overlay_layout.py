@@ -260,7 +260,7 @@ def validate_grid(grid, label="Layout"):
         return f"{label}: grid has no cells."
     if grid["width"] * grid["height"] > MAX_CELLS:
         return (
-            f"{label}: {grid['width']}x{grid['height']} exceeds FPP's "
+            f"{label}: {grid['width']}x{grid['height']} exceeds the controller's "
             f"{MAX_CELLS}-cell limit."
         )
     cpn = grid["channels_per_node"] or 3

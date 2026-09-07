@@ -51,7 +51,7 @@ def _validate(data):
         if not ((0 <= day <= 15) or (256 <= day <= 32512)):
             raise ValueError
     except (TypeError, ValueError):
-        return None, "day must be a valid FPP day index or bitmask"
+        return None, "day must be a valid day index or bitmask"
 
     start_time = str(data.get("startTime", "")).strip()
     if start_time not in SOLAR_TIMES and not _TIME_RE.match(start_time):

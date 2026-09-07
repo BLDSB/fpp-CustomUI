@@ -76,6 +76,68 @@ def _delete_legacy_turn_off_playlist(app):
         _logger.debug("Legacy playlist cleanup skipped: %s", exc)
 
 
+def _add_missing_columns(app):
+    """Add columns that db.create_all() cannot add to an existing table.
+
+    create_all() only ever creates missing *tables*, so a column added to a model
+    after a controller is already in the field would silently not exist there and
+    every query touching it would fail.  SQLite's ALTER TABLE ADD COLUMN is cheap
+    and idempotent when guarded, so each new column is listed here once.
+
+    Keep entries forever — a controller may upgrade from any older version.
+    """
+    wanted = [
+        # (table, column, DDL type + default)
+        ("custom_playlists", "random", "BOOLEAN NOT NULL DEFAULT 0"),
+    ]
+    from sqlalchemy import text
+    for table, column, ddl in wanted:
+        try:
+            rows = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            if not rows:
+                continue  # table does not exist yet; create_all will build it complete
+            if any(r[1] == column for r in rows):
+                continue
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            db.session.commit()
+            app.logger.info("Added missing column %s.%s", table, column)
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Could not add column %s.%s: %s", table, column, exc)
+
+
+def _drop_removed_columns(app):
+    """Drop columns whose feature has been removed from the app.
+
+    The mirror image of _add_missing_columns: a controller upgrading from an
+    older version still has these columns, and they are NOT NULL with no server
+    default, so an INSERT from the current model - which no longer supplies them
+    - would fail.  SQLite has supported ALTER TABLE DROP COLUMN since 3.35 and
+    FPP ships far newer, but the guard keeps an old runtime from bricking start.
+
+    Keep entries forever - a controller may upgrade from any older version.
+    """
+    unwanted = [
+        # (table, column) - Multisync, removed 2026-09-07
+        ("effect_presets", "multisync"),
+        ("effect_presets", "systems_json"),
+    ]
+    from sqlalchemy import text
+    for table, column in unwanted:
+        try:
+            rows = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            if not rows:
+                continue  # table does not exist yet
+            if not any(r[1] == column for r in rows):
+                continue  # already gone
+            db.session.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+            db.session.commit()
+            app.logger.info("Dropped removed column %s.%s", table, column)
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Could not drop column %s.%s: %s", table, column, exc)
+
+
 def _regenerate_scene_playlists(app):
     """Rewrite all scene playlists to FPP after a restart."""
     with app.app_context():
@@ -98,6 +160,30 @@ def _regenerate_effect_playlists(app):
                 _write_effect_playlist(preset)
         except Exception as exc:
             app.logger.warning("Could not regenerate effect playlists on startup: %s", exc)
+
+
+def _regenerate_custom_playlists(app):
+    """Rewrite all user-built playlists to FPP after a restart."""
+    with app.app_context():
+        try:
+            from app.models import CustomPlaylist
+            from app.routes.custom_playlists import _write_custom_playlist
+            for cp in CustomPlaylist.query.all():
+                _write_custom_playlist(cp)
+        except Exception as exc:
+            app.logger.warning("Could not regenerate custom playlists on startup: %s", exc)
+
+
+def regenerate_all_playlists(app):
+    """Rewrite every playlist this UI owns to FPP.
+
+    Used by the full-backup restore: the internal token is embedded in the
+    callback URLs inside those playlist files, so restoring a token from a
+    backup invalidates every one of them until they are written again.
+    """
+    _regenerate_scene_playlists(app)
+    _regenerate_effect_playlists(app)
+    _regenerate_custom_playlists(app)
 
 
 def _fpp_is_ready(app):
@@ -124,7 +210,7 @@ def _deferred_fpp_init(app):
     while not _fpp_is_ready(app):
         if time.monotonic() > deadline:
             _logger.error(
-                "FPP API never became ready — scene/effect playlists were NOT "
+                "FPP API never became ready — playlists were NOT "
                 "regenerated. They will refresh on the next fpp-ui restart."
             )
             return
@@ -134,6 +220,7 @@ def _deferred_fpp_init(app):
 
     _regenerate_scene_playlists(app)
     _regenerate_effect_playlists(app)
+    _regenerate_custom_playlists(app)
     _delete_legacy_turn_off_playlist(app)
     _logger.info("Deferred FPP startup sync complete")
 
@@ -169,6 +256,8 @@ def create_app():
                 "writable and the disk not full? The UI will return errors until "
                 "this is fixed."
             )
+        _add_missing_columns(app)
+        _drop_removed_columns(app)
         _create_turn_off_lights_preset(app)
 
     from app.routes import main as main_blueprint
@@ -194,6 +283,12 @@ def create_app():
 
     from app.routes.effects import effects_bp
     app.register_blueprint(effects_bp)
+
+    from app.routes.custom_playlists import custom_playlists_bp
+    app.register_blueprint(custom_playlists_bp)
+
+    from app.routes.backup import backup_bp
+    app.register_blueprint(backup_bp)
 
     # Background workers (daemon threads — zero cost when idle). The FPP
     # startup sync waits for fppd to come up before talking to it.

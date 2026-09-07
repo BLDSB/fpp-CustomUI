@@ -43,7 +43,7 @@ def validate(name):
         return ("Use 1-32 characters: letters, numbers, hyphen or underscore "
                 "(no spaces, slashes or punctuation).")
     if name.lower() in RESERVED_PATHS:
-        return f"'{name}' is reserved by FPP — pick a different name."
+        return f"'{name}' is reserved by the controller — pick a different name."
     return None
 
 

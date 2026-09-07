@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ site_settings.get('site_name') or 'FPP Control' }} — Login</title>
+    <title>{{ site_settings.get('site_name') or 'Lighting Control' }} — Login</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -174,7 +174,7 @@
                  style="height:48px;width:auto;object-fit:contain;border-radius:5px">
             {% endif %}
 
-            <div class="login-title">{{ site_settings.get('site_name') or 'FPP Control' }}</div>
+            <div class="login-title">{{ site_settings.get('site_name') or 'Lighting Control' }}</div>
 
             {% if error %}
             <div class="error" id="error-msg">{{ error }}</div>
