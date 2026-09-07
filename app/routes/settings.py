@@ -4,6 +4,8 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
 
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
@@ -497,6 +499,43 @@ def genius_reboot():
             return jsonify({"error": "Reboot command not acknowledged"}), 502
     except Exception as exc:
         return jsonify({"error": f"Could not reach controller {idx}: {exc}"}), 502
+    return jsonify({"ok": True})
+
+
+@settings_bp.post("/api/system/reboot")
+@login_required
+def system_reboot():
+    """Reboot the Raspberry Pi this plugin runs on.
+
+    systemd tears the service down the moment the command lands, so the reboot
+    is fired from a background thread and this response gets out first.
+    """
+    # Check passwordless sudo up front — otherwise the thread would fail
+    # silently and the page would claim a reboot that never happened.
+    try:
+        probe = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=5)
+    except Exception as exc:
+        current_app.logger.error("Could not check sudo before reboot: %s", exc)
+        return jsonify({"error": f"Could not run the reboot command: {exc}"}), 500
+    if probe.returncode != 0:
+        return jsonify({
+            "error": "This user cannot reboot without a password — "
+                     "reboot from the FPP menu or over SSH.",
+        }), 500
+
+    def _reboot():
+        # Long enough for the JSON response to reach the browser.
+        time.sleep(2)
+        try:
+            subprocess.run(["sudo", "-n", "systemctl", "reboot"], timeout=20)
+        except Exception:
+            try:
+                subprocess.run(["sudo", "-n", "shutdown", "-r", "now"], timeout=20)
+            except Exception:
+                pass
+
+    current_app.logger.warning("Reboot requested from the settings page")
+    threading.Thread(target=_reboot, daemon=True).start()
     return jsonify({"ok": True})
 
 

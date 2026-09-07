@@ -66,6 +66,9 @@
     .btn-save:hover { opacity: 0.85; }
     .btn-save:disabled { opacity: 0.45; cursor: not-allowed; }
 
+    /* Destructive actions read differently from the ordinary save buttons. */
+    .btn-danger { background: #a8322c; }
+
     /* Color picker rows */
     .color-row {
         display: flex;
@@ -617,6 +620,34 @@
     </div>
     {% endif %}
 
+    <!-- System reboot -->
+    <div class="settings-card">
+        <h2>System Reboot</h2>
+        <p class="hint" style="font-size:0.78rem;color:var(--text-dim);line-height:1.5;margin:0">
+            This page will stop responding for 1-2 minutes while the system is rebooting.
+        </p>
+        <div>
+            <button id="btn-reboot-pi" class="btn-save btn-danger">Reboot Controller</button>
+        </div>
+    </div>
+
+</div>
+
+<!-- Reboot this controller confirmation modal -->
+<div class="modal-backdrop" id="modal-pi-reboot" role="dialog" aria-modal="true">
+    <div class="modal-box">
+        <h3>Reboot this controller?</h3>
+        <p>
+            Are you sure you want to reboot? The system will be offline until the
+            reboot is complete.
+        </p>
+        <div class="modal-actions">
+            <button type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)"
+                    id="btn-pi-modal-cancel">Cancel</button>
+            <button type="button" class="btn-save btn-danger" id="btn-pi-modal-confirm">Reboot Now</button>
+        </div>
+    </div>
 </div>
 
 <!-- Genius Pro reboot confirmation modal -->
@@ -817,6 +848,38 @@
         } finally {
             btn.disabled    = false;
             btn.textContent = 'Reboot';
+        }
+    });
+
+    // ── Reboot this controller ────────────────────────────
+    const piModal = document.getElementById('modal-pi-reboot');
+
+    document.getElementById('btn-reboot-pi').addEventListener('click', () => {
+        piModal.classList.add('open');
+    });
+    document.getElementById('btn-pi-modal-cancel').addEventListener('click', () => {
+        piModal.classList.remove('open');
+    });
+    piModal.addEventListener('click', e => {
+        if (e.target === piModal) piModal.classList.remove('open');
+    });
+    document.getElementById('btn-pi-modal-confirm').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-pi-modal-confirm');
+        btn.disabled = true;
+        btn.textContent = 'Rebooting…';
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/system/reboot',
+                                     { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Reboot failed');
+            piModal.classList.remove('open');
+            // The server goes away seconds from now, so leave the notice up
+            // rather than re-enabling a button that can no longer reach it.
+            showToast('Rebooting — this page will come back in a minute or two.', 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+            btn.disabled    = false;
+            btn.textContent = 'Reboot Now';
         }
     });
 
