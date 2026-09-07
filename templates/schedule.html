@@ -367,7 +367,7 @@
     function formatTimeCell(t, offset) {
         if (!t) return '—';
         if (!SOLAR_TIMES.has(t)) return formatTime(t);
-        const mins = Math.round((parseInt(offset, 10) || 0) / 60);
+        const mins = parseInt(offset, 10) || 0;
         if (!mins) return t;
         return `${t} ${mins > 0 ? '+' : ''}${mins}m`;
     }
@@ -417,8 +417,9 @@
         if (val === 'exact') {
             return { time: toHHMMSS(document.getElementById(`f-${which}`).value), offset: 0 };
         }
+        // FPP stores solar offsets in minutes, not seconds
         const mins = parseInt(document.getElementById(`f-${which}-offset`).value || '0', 10);
-        return { time: val, offset: isNaN(mins) ? 0 : mins * 60 };
+        return { time: val, offset: isNaN(mins) ? 0 : mins };
     }
 
     function getDayMask() {
@@ -552,10 +553,10 @@
             }
             setDayMask(entry.day);
             setTimeType('start', entry.startTime);
-            const startMins = Math.round((parseInt(entry.startTimeOffset, 10) || 0) / 60);
+            const startMins = parseInt(entry.startTimeOffset, 10) || 0;
             if (startMins) document.getElementById('f-start-offset').value = startMins;
             setTimeType('end', entry.endTime || '23:59:59');
-            const endMins = Math.round((parseInt(entry.endTimeOffset, 10) || 0) / 60);
+            const endMins = parseInt(entry.endTimeOffset, 10) || 0;
             if (endMins) document.getElementById('f-end-offset').value = endMins;
             document.getElementById('f-stop-type').value = String(entry.stopType ?? 0);
             document.getElementById('f-repeat').checked  = entry.repeat  === '1' || entry.repeat  === 1;
