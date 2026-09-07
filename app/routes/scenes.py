@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_playlist import build_playlist_def, scene_entries
 from app.models import OVERLAY_MODELS, Scene, SceneZone
 
 scenes_bp = Blueprint("scenes", __name__)
@@ -29,46 +30,15 @@ def _playlist_name(scene_name):
 def _write_scene_files(scene):
     """Register the scene playlist with FPP.
 
-    leadIn applies the scene colors once via Flask.  Pixel overlay models are a
-    persistent layer — colors stay set until explicitly cleared, so no loop is needed.
-    mainPlaylist is a simple 10-second repeating pause that keeps FPP's player
-    active without consuming resources.
-    leadOut disables all overlay models when FPP stops the playlist gracefully
-    (i.e. when the scheduler reaches the entry's endTime with stopType=Graceful).
+    The playlist shape comes from app/fpp_playlist.py; see that module for why
+    it must not be restructured.  clear=False keeps a standalone scene playlist
+    behaving exactly as it always has — it only touches the zones it names.
     """
-    token = current_app.config.get("INTERNAL_TOKEN", "")
-    apply_url = f"http://localhost:5000/internal/scene/{scene.id}/apply?token={token}"
-
-    def url_cmd(u):
-        return {"type": "command", "enabled": 1, "command": "URL",
-                "args": [u, "GET", ""], "startDelay": 0, "endDelay": 0}
-
-    def overlay_effect(model, state, action):
-        return {"type": "command", "enabled": 1, "command": "Overlay Model Effect",
-                "args": [model, state, action], "startDelay": 0, "endDelay": 0}
-
-    def pause_item(d):
-        return {"type": "pause", "enabled": 1, "duration": d,
-                "startDelay": 0, "endDelay": 0}
-
-    playlist_def = {
-        "name": _playlist_name(scene.name),
-        "version": 4,
-        "repeat": 1,
-        "loopCount": 0,
-        "desc": "FPP UI Scene",
-        "random": 0,
-        "empty": False,
-        "leadIn": [],
-        "mainPlaylist": [
-            url_cmd(apply_url),
-            pause_item(10),
-        ],
-        "leadOut": [
-            pause_item(3),
-            overlay_effect("--All Models--", "Enabled", "Stop Effects"),
-        ],
-    }
+    playlist_def = build_playlist_def(
+        _playlist_name(scene.name),
+        scene_entries(scene.id, 10),
+        "FPP UI Scene",
+    )
     try:
         requests.post(
             _fpp(f"/playlist/{_playlist_name(scene.name)}"),
@@ -84,6 +54,33 @@ def _delete_scene_files(scene):
         requests.delete(_fpp(f"/playlist/{_playlist_name(scene.name)}"), timeout=5)
     except requests.RequestException:
         pass
+
+
+def _reset_overlays():
+    """Stop any running effect and deactivate every overlay model.
+
+    Deliberately does NOT stop playback: this runs from inside a playlist entry,
+    where hitting /playlists/stop would kill the playlist that is driving it.
+    """
+    try:
+        requests.post(
+            _fpp("/command"),
+            json={
+                "command": "Overlay Model Effect",
+                "multisyncCommand": False,
+                "multisyncHosts": "",
+                "args": ["--All Models--", "Enabled", "Stop Effects"],
+            },
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
+
+    for model in OVERLAY_MODELS:
+        try:
+            requests.put(_fpp(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
+        except requests.RequestException:
+            pass
 
 
 def _set_scene_colors(scene):
@@ -125,11 +122,7 @@ def _apply_scene(scene):
     except requests.RequestException:
         pass
 
-    for model in OVERLAY_MODELS:
-        try:
-            requests.put(_fpp(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
-        except requests.RequestException:
-            pass
+    _reset_overlays()
 
     return _set_scene_colors(scene)
 
@@ -149,6 +142,10 @@ def create_scene():
 
     if not name or len(name) > 64:
         return jsonify({"error": "Name required (max 64 chars)"}), 400
+    # The name becomes an FPP playlist name, which goes into a URL path
+    # unencoded — same rule effect presets already enforce.
+    if "/" in name or "\\" in name or ".." in name:
+        return jsonify({"error": "Name cannot contain slashes or .."}), 400
     if Scene.query.filter_by(name=name).first():
         return jsonify({"error": "A scene with that name already exists"}), 409
     if not zones or not isinstance(zones, dict):
@@ -202,7 +199,13 @@ def apply_scene(scene_id):
 
 @scenes_bp.get("/internal/scene/<int:scene_id>/apply")
 def internal_apply_scene(scene_id):
-    """Token-authenticated endpoint for FPP playlists to trigger a scene."""
+    """Token-authenticated endpoint for FPP playlists to trigger a scene.
+
+    Must never call _apply_scene() — that stops playback, which would kill the
+    playlist calling in here.  ?clear=1 resets the overlay layer first (used by
+    built playlists so one item's colors do not bleed into the next); without it
+    the scene only touches the zones it names, as it always has.
+    """
     token = request.args.get("token", "")
     internal_token = current_app.config.get("INTERNAL_TOKEN", "")
 
@@ -215,9 +218,10 @@ def internal_apply_scene(scene_id):
     if not scene:
         return jsonify({"error": "Scene not found"}), 404
 
+    if request.args.get("clear") == "1":
+        _reset_overlays()
+
     ok, errors = _set_scene_colors(scene)
     if not ok:
         return jsonify({"error": f"Partial apply — failed: {', '.join(errors)}"}), 502
     return jsonify({"ok": True})
-
-

@@ -78,7 +78,7 @@ def send_color():
         ).raise_for_status()
     except requests.RequestException as exc:
         current_app.logger.error("FPP send color error: %s", exc)
-        return jsonify({"error": "Could not send color to FPP"}), 502
+        return jsonify({"error": "Could not send color to the controller"}), 502
 
     return jsonify({"ok": True})
 

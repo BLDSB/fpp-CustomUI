@@ -55,29 +55,6 @@
     .zone-check-label input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
     .zone-check-label.select-all { border-bottom: 1px solid var(--border-dim); padding-bottom: 0.45rem; margin-bottom: 0.2rem; font-weight: 600; color: var(--text-dim); font-size: 0.78rem; }
 
-    /* ── Multisync ──────────────────────────────────────────────── */
-    .multisync-toggle {
-        display: flex;
-        align-items: center;
-        gap: 0.55rem;
-        font-size: 0.82rem;
-        color: var(--text-dim);
-        cursor: pointer;
-        margin-top: 0.75rem;
-        padding-top: 0.75rem;
-        border-top: 1px solid var(--border-dim);
-    }
-    .multisync-toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
-    #multisync-systems { margin-top: 0.5rem; display: none; flex-direction: column; gap: 0.3rem; }
-    #multisync-systems.open { display: flex; }
-    .system-check-label {
-        display: flex; align-items: center; gap: 0.5rem;
-        font-size: 0.78rem; cursor: pointer;
-        padding: 0.15rem 0.3rem; border-radius: 4px;
-    }
-    .system-check-label:hover { background: rgba(255,255,255,0.05); }
-    .system-check-label input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
-
     /* ── Effect browser ─────────────────────────────────────────── */
     .effect-grid {
         display: flex;
@@ -140,6 +117,43 @@
         transition: background 0.15s, color 0.15s;
     }
     .btn-stop:hover { background: #c0392b; color: #fff; }
+    .btn-stop:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-stop:disabled:hover { background: none; color: #c0392b; }
+
+    /* Output gate — lives in the sticky Zones card, directly under the zone
+       list, so it stays on screen and is visible before an effect is picked
+       (#effect-params-card is display:none until then). */
+    .btn-output {
+        display: block;
+        width: 100%;
+        margin: 0.9rem 0 0;
+        background: transparent;
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
+        border-radius: 7px;
+        /* The Zones column is 220px, so the label has ~180px to live in and
+           has to be allowed to wrap onto a second line. */
+        padding: 0.55rem 0.7rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+        line-height: 1.3;
+        text-align: center;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .btn-output:hover { color: var(--text); border-color: var(--text); }
+    /* Output is live — the same green the Loop and schedule pills use for "on". */
+    .btn-output.live {
+        background: rgba(46,204,113,0.15);
+        color: #2ecc71;
+        border-color: rgba(46,204,113,0.35);
+    }
+    .btn-output.live:hover {
+        background: rgba(46,204,113,0.28);
+        color: #2ecc71;
+        border-color: rgba(46,204,113,0.5);
+    }
+    .btn-output:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .arg-grid {
         display: grid;
@@ -224,6 +238,40 @@
     }
     .btn-save-preset:hover { color: var(--accent); border-color: var(--accent); }
 
+    /* ── Pixel preview ──────────────────────────────────────────── */
+    .pixel-preview {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        margin: 0 0 1.1rem;
+    }
+    /* display:flex overrides the UA [hidden] rule — this line is required. */
+    .pixel-preview[hidden] { display: none; }
+    #pixel-strip {
+        display: block;
+        width: 100%;
+        height: 34px;
+        background: #000;
+        border: 1px solid var(--border-dim);
+        border-radius: 6px;
+        image-rendering: pixelated;
+    }
+    .pixel-preview-caption {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 0.72rem;
+        color: var(--text-dim);
+    }
+    .pixel-preview-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-left: auto;
+        cursor: pointer;
+    }
+    .pixel-preview-toggle input { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+
     /* ── Presets ─────────────────────────────────────────────────── */
     .preset-list {
         display: flex;
@@ -284,7 +332,7 @@
 <!-- Top: two-column layout -->
 <div class="effects-layout" style="margin-bottom:1.25rem">
 
-    <!-- Left: Zone selector + Multisync -->
+    <!-- Left: Zone selector + output gate -->
     <div class="effects-card" style="position:sticky;top:1rem">
         <h2>Zones</h2>
         <div class="zone-checks">
@@ -299,10 +347,7 @@
             {% endfor %}
         </div>
 
-        <label class="multisync-toggle">
-            <input type="checkbox" id="chk-multisync"> Multisync
-        </label>
-        <div id="multisync-systems"></div>
+        <button id="btn-output" class="btn-output">&#9654; Enable Output To Lights</button>
     </div>
 
     <!-- Right: Effect browser -->
@@ -320,6 +365,15 @@
         <button class="btn-stop" id="btn-stop-effect">Stop Effects</button>
     </div>
     <div class="arg-grid" id="effect-args-form"></div>
+    <div class="pixel-preview" id="pixel-preview" hidden>
+        <canvas id="pixel-strip" aria-hidden="true"></canvas>
+        <div class="pixel-preview-caption">
+            <span>Preview &mdash; approximate, not live output</span>
+            <label class="pixel-preview-toggle">
+                <input type="checkbox" id="chk-preview-enabled" checked> Animate
+            </label>
+        </div>
+    </div>
     <div class="params-actions">
         <button class="btn-save-preset" id="btn-save-preset">Save as Preset…</button>
         <button class="btn-run" id="btn-run-effect">&#9654; Run Effect</button>
@@ -330,7 +384,7 @@
 <div class="effects-card">
     <h2>Saved Presets</h2>
     <p class="preset-hint">
-        Saving a preset also creates an FPP playlist named
+        Saving a preset also creates a playlist named
         <strong>Effect - &lt;preset name&gt;</strong>, so you can start and stop it
         from the Controls tab or schedule it on the Schedule tab.
     </p>
@@ -397,33 +451,10 @@
         syncAllZonesCheckbox();
     }
 
-    // ── Multisync ───────────────────────────────────────────────
-    const chkMultisync   = document.getElementById('chk-multisync');
-    const systemsDiv     = document.getElementById('multisync-systems');
-
-    apiFetch('/api/effects/systems').then(systems => {
-        if (!systems.length) return;
-        systems.forEach(s => {
-            const label = document.createElement('label');
-            label.className = 'system-check-label';
-            label.innerHTML = `<input type="checkbox" class="system-chk" value="${escHtml(s.address)}">
-                <span>${escHtml(s.hostname)} <span style="color:var(--text-dim);font-size:0.72rem">${escHtml(s.address)}</span></span>`;
-            systemsDiv.appendChild(label);
-        });
-    }).catch(() => {});
-
-    chkMultisync.addEventListener('change', () => {
-        systemsDiv.classList.toggle('open', chkMultisync.checked);
-    });
-
-    function getSelectedSystems() {
-        return [...document.querySelectorAll('.system-chk:checked')].map(c => c.value);
-    }
-
     // ── Effect browser ──────────────────────────────────────────
     const ALLOWED_EFFECTS = [
         'Dynamic Smooth', 'Plasma', 'Sinelon', 'Fireworks', 'Meteor',
-        'Color Waves', 'Matrix', 'Bars', 'Swirl', 'Aurora',
+        'Colorwaves', 'Matrix', 'Bars', 'Aurora',
     ];
 
     apiFetch('/api/effects/list').then(data => {
@@ -432,10 +463,7 @@
         const grid = document.getElementById('effect-grid');
         ALLOWED_EFFECTS.forEach(name => {
             // Find matching effect (case-insensitive, strip "WLED - " prefix)
-            const match = all.find(e =>
-                e.toLowerCase() === name.toLowerCase() ||
-                e.replace(/^WLED - /i, '').toLowerCase() === name.toLowerCase()
-            );
+            const match = all.find(e => normEffect(e) === normEffect(name));
             if (!match) return;
             const btn = document.createElement('button');
             btn.className = 'effect-btn';
@@ -485,6 +513,8 @@
             field.appendChild(input);
             form.appendChild(field);
         });
+
+        bindPreview(argDefs);
     }
 
     function makeRangeInput(arg, val) {
@@ -578,13 +608,529 @@
 
     function collectArgs() {
         return [...document.querySelectorAll('#effect-args-form .arg-field')].map(field => {
-            // For wrapped inputs (range, color, bool), the actual input is in _argInput
-            const wrap = field.querySelector('.arg-range-wrap, .arg-color-wrap, .arg-bool-wrap');
-            const inp  = wrap ? wrap._argInput : field.querySelector('.arg-input');
+            const inp = fieldInput(field);
             if (!inp) return '';
             if (inp.type === 'checkbox') return inp.checked ? 'true' : 'false';
             return inp.value;
         });
+    }
+
+    // ── Shared helpers ───────────────────────────────────────────
+    // Effect names arrive as either "Sinelon" or "WLED - Sinelon"; normalise
+    // once so the whitelist matcher and the preview table cannot drift apart.
+    function normEffect(name) {
+        return String(name || '').replace(/^WLED - /i, '').trim().toLowerCase();
+    }
+
+    // An .arg-field can hold two elements carrying .arg-input: renderArgs()
+    // tags the wrapper, and makeRange/Color/BoolInput tag the real control
+    // inside it. The wrapper stashes the real one on _argInput — always
+    // prefer that.
+    function fieldInput(field) {
+        const wrap = field.querySelector('.arg-range-wrap, .arg-color-wrap, .arg-bool-wrap');
+        return wrap ? wrap._argInput : field.querySelector('.arg-input');
+    }
+
+    // ── Pixel preview ────────────────────────────────────────────
+    // A ~20-pixel virtual strip that approximates the selected effect in the
+    // browser. fppd renders the real effects in C++ and there is no cheap way
+    // to read that back, so this is hand-written approximation math — a family
+    // resemblance, not a mirror. Nothing here talks to the Pi.
+    //
+    // Performance contract (the kiosk is a Pi 3 with no GPU accel):
+    //   * one 20x1 canvas, one putImageData per frame — no DOM or CSSOM writes,
+    //     so the loop schedules zero style recalc and zero layout.
+    //   * 15fps, and the loop is genuinely cancelled (not just idling) whenever
+    //     it is not visible. See shouldRun().
+    //   * the frame loop never touches the DOM: params are cached on input.
+
+    const PIXEL_COUNT = 20;
+    const FRAME_MS    = 1000 / 15;
+    const TWO_PI      = Math.PI * 2;
+    const PREVIEW_KEY = 'fpp.effectPreview';
+
+    // Reused scratch — renderers write into this rather than returning arrays,
+    // which would be 300 allocations/sec forever on a small ARM heap.
+    const OUT = { r: 0, g: 0, b: 0 };
+
+    // A subset of the WLED palettes FPP offers. Anything not listed falls back
+    // to a plain hue sweep, which is close enough for a preview.
+    const PALETTES = {
+        'party':         'ff00a0,ff0060,ff4000,ffa000,ffe000,ff4080',
+        'cloud':         '000060,0000a0,4040c0,8080ff,c0c0ff,ffffff',
+        'lava':          '000000,800000,ff0000,ff8000,ffff00,ffffff',
+        'ocean':         '000030,003060,006090,0090c0,40c0e0,c0ffff',
+        'forest':        '003000,006000,109010,40c040,80ff40,c0ff80',
+        'rainbow':       'ff0000,ffff00,00ff00,00ffff,0000ff,ff00ff,ff0000',
+        'rainbow bands': 'ff0000,000000,ffff00,000000,00ff00,000000,00ffff,000000,0000ff,000000',
+        'sunset':        '78002c,c04000,ff8000,ffd080,404080,000040',
+        'sunset 2':      'ffd080,ff8000,c02000,400040,000020',
+        'fire':          '000000,600000,c02000,ff8000,ffff40,ffffff',
+        'icefire':       '000030,0040a0,40c0ff,ffffff,ffc040,ff4000',
+        'aurora':        '000000,00ff40,00c0a0,0080ff,4000a0,000000',
+        'aurora 2':      '001a20,00a060,40ffa0,0060c0,200060',
+        'beech':         'c0f0ff,80e0ff,40c0e0,209090,105050,ffffe0',
+        'temperature':   '1e0064,0064c8,00c8c8,c8c800,c86400,c80000',
+        'magenta':       '000000,600060,a000a0,ff00ff,ff80ff,ffffff',
+        'yelblu':        'ffff00,80c060,4080a0,0040ff',
+        'orange & teal': '00a0a0,40d0c0,ffffff,ffa000,c06000',
+        'c9':            'b80400,08850b,077f80,ffb800',
+        'c9 2':          'b80400,ffb800,08850b,077f80',
+        'sakura':        'ff6080,ffa0b0,ffc0d0,ff80a0',
+        'atlantica':     '001a3c,00477f,0087a0,00c0a0,80e0c0',
+        'pastel':        'ffb0b0,ffe0b0,e0ffb0,b0ffe0,b0e0ff,e0b0ff',
+        'autumn':        '8f2a00,c05000,e08000,ffc040,806000',
+        'analogous':     '0000ff,4000c0,8000a0,c00060,ff0000',
+        'splash':        '000000,4000a0,a000c0,ff0080,ffc0c0',
+        'vintage':       '000000,3f1f00,7f4f1f,bf8f3f,ffdf9f',
+        'departure':     '502000,806040,c0a080,ffffff,80ff80,00c000',
+        'landscape':     '000060,0060a0,20a020,80c040,ffff80,ffffff',
+        'breeze':        '00c0ff,0080c0,004080,80e0ff',
+        'red & blue':    'ff0000,800040,0000ff,400080',
+        'drywet':        '806000,c0a040,ffffc0,40c0c0,0060a0',
+    };
+    const paletteCache = {};
+
+    function paletteStops(name) {
+        const key = String(name || '').trim().toLowerCase();
+        if (paletteCache[key] !== undefined) return paletteCache[key];
+        const spec = PALETTES[key];
+        const stops = spec ? spec.split(',').map(hexToRgb) : null;
+        paletteCache[key] = stops;
+        return stops;
+    }
+
+    function hexToRgb(hex) {
+        const v = parseInt(String(hex).replace('#', ''), 16) || 0;
+        return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+    }
+
+    function hsvToRgb(h, s, v, out) {
+        h = ((h % 1) + 1) % 1;
+        const i = Math.floor(h * 6), f = h * 6 - i;
+        const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+        let r, g, b;
+        switch (i % 6) {
+            case 0: r = v; g = t; b = p; break;
+            case 1: r = q; g = v; b = p; break;
+            case 2: r = p; g = v; b = t; break;
+            case 3: r = p; g = q; b = v; break;
+            case 4: r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+        }
+        out.r = r * 255; out.g = g * 255; out.b = b * 255;
+    }
+
+    // Every renderer routes colour through here, so none of them has to know
+    // whether the effect exposes a palette, colour pickers, or neither.
+    function paletteAt(p, v, out) {
+        const stops = p.stops, n = stops ? stops.length : 0;
+        if (!n) { hsvToRgb(v, 1, 1, out); return; }
+        if (n === 1) { out.r = stops[0].r; out.g = stops[0].g; out.b = stops[0].b; return; }
+        v = v < 0 ? 0 : v > 1 ? 1 : v;
+        const f = v * (n - 1), k = Math.min(n - 2, f | 0), m = f - k;
+        const a = stops[k], b = stops[k + 1];
+        out.r = a.r + (b.r - a.r) * m;
+        out.g = a.g + (b.g - a.g) * m;
+        out.b = a.b + (b.b - a.b) * m;
+    }
+
+    function scale(out, v) { out.r *= v; out.g *= v; out.b *= v; }
+
+    // For effects that use v as a position along a gradient. A single-colour
+    // palette has no gradient to travel, so the only thing left to vary is
+    // brightness — without this those effects render dead flat.
+    function paletteRamp(p, v, out) {
+        paletteAt(p, v, out);
+        if (p.stops && p.stops.length === 1) {
+            scale(out, 0.12 + 0.88 * (v < 0 ? 0 : v > 1 ? 1 : v));
+        }
+    }
+
+    // Deterministic pseudo-random in 0..1 — lets bursts/heads have stable
+    // positions without keeping any per-frame state.
+    function hash01(k) { return ((Math.sin(k * 12.9898) * 43758.5453) % 1 + 1) % 1; }
+
+    // Renderers: fn(out, i, n, t, p) writes out.r/.g/.b in 0..255.
+    // All of them are stateless — no history buffer — so pausing and resuming
+    // is exact and there is nothing to reset.
+
+    function rateOf(p, lo, hi) { return lo + p.speed * (hi - lo); }
+
+    function fxSinelon(out, i, n, t, p) {
+        const ph   = t * 0.001 * rateOf(p, 0.15, 2.0);
+        const pos  = (n - 1) * 0.5 * (1 + Math.sin(ph * TWO_PI));
+        const tail = 0.8 + p.intensity * 5;
+        const d    = Math.abs(i - pos);
+        // Distance falloff instead of WLED's fade-the-previous-frame trail:
+        // same visual read, no state. The colour walks the palette (or the hue
+        // wheel, with no palette) the way the real effect does.
+        paletteAt(p, (ph * 0.17) % 1, out);
+        scale(out, d > tail ? 0 : 1 - d / tail);
+    }
+
+    function fxMeteor(out, i, n, t, p) {
+        const ph   = t * 0.001 * rateOf(p, 0.1, 1.6);
+        const head = (ph % 1) * n;
+        let d = head - i;
+        d = ((d % n) + n) % n;
+        const tail = 1.5 + p.intensity * (n - 2);
+        let v = d > tail ? 0 : 1 - d / tail;
+        v *= v;                                   // squared ≈ exponential decay
+        paletteAt(p, p.gradient ? d / n : (ph * 0.13) % 1, out);
+        scale(out, v);
+    }
+
+    function fxPlasma(out, i, n, t, p) {
+        const ph = t * 0.001 * rateOf(p, 0.1, 1.2);
+        const a  = Math.sin(i * 0.35 + ph * TWO_PI);
+        const b  = Math.sin(i * 0.13 - ph * TWO_PI * 0.7);
+        let v = (a + b) * 0.25 + 0.5;
+        v = 0.5 + (v - 0.5) * (0.4 + p.intensity * 1.2);   // intensity = contrast
+        paletteRamp(p, v, out);
+    }
+
+    function fxColorwaves(out, i, n, t, p) {
+        const ph   = t * 0.001 * rateOf(p, 0.05, 0.7);
+        const span = 0.3 + p.intensity * 1.7;              // "Hue" = spread
+        const val  = 0.55 + 0.45 * Math.sin(((i / n) * 2 + ph) * TWO_PI);
+        if (p.stops) {
+            paletteAt(p, ((i / n) * span + ph) % 1, out);
+            scale(out, val);
+        } else {
+            hsvToRgb((i / n) * span + ph * 0.25, 1, val, out);
+        }
+    }
+
+    function fxFireworks(out, i, n, t, p) {
+        // "Frequency" drives how often a burst starts.
+        const period = 1.4 - p.speed * 1.15;
+        const s = t * 0.001 / period;
+        const k = Math.floor(s), age = s - k;
+        out.r = out.g = out.b = 0;
+        // Two overlapping bursts so the strip is rarely empty.
+        for (let j = 0; j < 2; j++) {
+            const id = k - j;
+            const a  = age + j;
+            if (a > 1) continue;
+            const centre = hash01(id) * n;
+            const radius = a * n * 0.45;
+            const v = Math.max(0, 1 - Math.abs(Math.abs(i - centre) - radius) * 0.9) * (1 - a);
+            if (v <= 0) continue;
+            paletteAt(p, hash01(id * 7 + 3), TMP);
+            out.r += TMP.r * v; out.g += TMP.g * v; out.b += TMP.b * v;
+        }
+    }
+
+    function fxMatrix(out, i, n, t, p) {
+        const ph    = t * 0.001 * rateOf(p, 0.15, 1.8);
+        const heads = 2 + Math.round(p.intensity * 3);
+        const tail  = 1.5 + p.trail * (n * 0.4);
+        out.r = out.g = out.b = 0;
+        for (let j = 0; j < heads; j++) {
+            const head = ((ph * (0.6 + hash01(j) * 0.8) + hash01(j * 5 + 1)) % 1) * n;
+            let d = head - i;
+            d = ((d % n) + n) % n;
+            if (d > tail) continue;
+            const v = 1 - d / tail;
+            if (p.customColor && p.colors.length) {
+                // Spawn colour at the head, trail colour behind it.
+                const a = p.colors[0], b = p.colors[1] || p.colors[0];
+                const m = d < 1 ? 0 : Math.min(1, (d - 1) / tail);
+                out.r += (a.r + (b.r - a.r) * m) * v;
+                out.g += (a.g + (b.g - a.g) * m) * v;
+                out.b += (a.b + (b.b - a.b) * m) * v;
+            } else {
+                out.r += 40 * v * v; out.g += 255 * v; out.b += 60 * v * v;
+            }
+        }
+    }
+
+    function fxAurora(out, i, n, t, p) {
+        const ph = t * 0.001 * rateOf(p, 0.03, 0.35);      // deliberately slow
+        const x  = i / n;
+        const a  = Math.sin((x * 1.1 + ph) * TWO_PI);
+        const b  = Math.sin((x * 0.6 - ph * 0.7) * TWO_PI);
+        const c  = Math.sin((x * 1.9 + ph * 1.3) * TWO_PI);
+        const v  = (a + b + c) / 6 + 0.5;
+        paletteAt(p, v, out);
+        scale(out, 0.35 + (0.25 + p.intensity * 0.4) * (a * 0.5 + 0.5));
+    }
+
+    function fxDynamicSmooth(out, i, n, t, p) {
+        const ph = t * 0.001 * rateOf(p, 0.05, 0.8);
+        const spread = 0.05 + p.intensity * 0.9;
+        if (p.stops) paletteRamp(p, ((i / n) * spread + ph) % 1, out);
+        else hsvToRgb((i / n) * spread + ph, 1, 1, out);
+    }
+
+    function fxBars(out, i, n, t, p) {
+        // Built-in Bars: blocks of the chosen colours marching along the strip,
+        // one full pass per "Time (ms)" divided by "Iterations".
+        const cycleMs = Math.max(120, p.timeMs / Math.max(1, p.iterations));
+        const ph      = (t % cycleMs) / cycleMs;
+        const bars    = Math.max(1, p.numColors * p.colorRep);
+        const k       = Math.floor(((i / n) * bars + ph * bars) % bars);
+        const cols    = p.colors.length ? p.colors : null;
+        if (!cols) { hsvToRgb(k / bars, 1, 1, out); return; }
+        const c = cols[k % cols.length];
+        out.r = c.r; out.g = c.g; out.b = c.b;
+    }
+
+    const TMP = { r: 0, g: 0, b: 0 };
+
+    const EFFECT_FX = {
+        'sinelon':        fxSinelon,
+        'meteor':         fxMeteor,
+        'plasma':         fxPlasma,
+        'colorwaves':     fxColorwaves,
+        'color waves':    fxColorwaves,
+        'fireworks':      fxFireworks,
+        'matrix':         fxMatrix,
+        'aurora':         fxAurora,
+        'dynamic smooth': fxDynamicSmooth,
+        'bars':           fxBars,
+    };
+
+    // Live parameter state. Renderers hold this reference, so refreshParams()
+    // must always mutate it in place and never reallocate it.
+    const params = {
+        speed: 0.5, intensity: 0.5, trail: 0.5, brightness: 1,
+        gradient: false, customColor: false,
+        colors: [], stops: null,
+        timeMs: 2000, iterations: 1, colorRep: 1, numColors: 3,
+    };
+
+    // Cached element references, rebuilt once per renderArgs(). The frame loop
+    // never reads the DOM — that is what keeps style recalc out of the frame.
+    let bindings = emptyBindings();
+
+    function emptyBindings() {
+        return {
+            speed: null, intensity: null, trail: null, brightness: null,
+            gradient: null, customColor: null, palette: null,
+            timeMs: null, iterations: null, colorRep: null, numColors: null,
+            colors: [],
+        };
+    }
+
+    // Arg descriptions come from the live controller and differ per effect
+    // (Speed / Phase / Frequency all drive rate; Intensity / Trail / Spawning
+    // rate / Hue all drive the second axis). Match loosely, first one wins,
+    // and always degrade to the defaults above rather than throwing.
+    const ROLE_RULES = [
+        ['speed',       /\bspeed\b/i,                 'num'],
+        ['speed',       /\bphase\b|\bfrequency\b/i,   'num'],
+        ['intensity',   /\bintensity\b/i,             'num'],
+        ['intensity',   /\btrail\b|spawning|\bhue\b|density|count|size|width/i, 'num'],
+        ['trail',       /\btrail\b/i,                 'num'],
+        ['brightness',  /\bbright/i,                  'num'],
+        ['timeMs',      /^time\b/i,                   'num'],
+        ['iterations',  /iteration/i,                 'num'],
+        ['colorRep',    /color\s*rep/i,               'num'],
+        ['numColors',   /num\s*colors/i,              'num'],
+        ['gradient',    /gradient/i,                  'bool'],
+        ['customColor', /custom\s*colou?r/i,          'bool'],
+    ];
+
+    function bindPreview(argDefs) {
+        const form = document.getElementById('effect-args-form');
+        bindings = emptyBindings();
+        const claimed = new Set();
+
+        argDefs.forEach((arg, idx) => {
+            const field = form.children[idx];   // positional — dataset.argIdx is unreliable
+            if (!field) return;
+            const el = fieldInput(field);
+            if (!el) return;
+            const desc = String(arg.description || '');
+
+            if (arg.type === 'color') { bindings.colors.push(el); return; }
+            if (arg.type === 'string' && /palette/i.test(desc)) { bindings.palette = el; return; }
+
+            for (let j = 0; j < ROLE_RULES.length; j++) {
+                const role = ROLE_RULES[j][0], re = ROLE_RULES[j][1], kind = ROLE_RULES[j][2];
+                if (bindings[role] || claimed.has(idx) || !re.test(desc)) continue;
+                if (kind === 'num' && arg.type !== 'range' && arg.type !== 'int') continue;
+                if (kind === 'bool' && arg.type !== 'bool') continue;
+                bindings[role] = (kind === 'bool')
+                    ? { el: el }
+                    : { el: el, min: Number(arg.min ?? 0), max: Number(arg.max ?? 255) };
+                claimed.add(idx);
+                break;
+            }
+        });
+
+        refreshParams();
+    }
+
+    function readNum(b, dflt) {
+        if (!b) return dflt;
+        const v = parseFloat(b.el.value);
+        if (!isFinite(v)) return dflt;
+        return b.max > b.min ? (v - b.min) / (b.max - b.min) : dflt;
+    }
+
+    function readRaw(b, dflt) {
+        if (!b) return dflt;
+        const v = parseFloat(b.el.value);
+        return isFinite(v) ? v : dflt;
+    }
+
+    function refreshParams() {
+        params.speed       = readNum(bindings.speed, 0.5);
+        params.intensity   = readNum(bindings.intensity, 0.5);
+        params.trail       = readNum(bindings.trail, 0.5);
+        params.brightness  = readNum(bindings.brightness, 1);
+        params.gradient    = bindings.gradient    ? bindings.gradient.el.checked    : false;
+        params.customColor = bindings.customColor ? bindings.customColor.el.checked : false;
+        params.timeMs      = readRaw(bindings.timeMs, 2000);
+        params.iterations  = readRaw(bindings.iterations, 1);
+        params.colorRep    = Math.max(1, Math.round(readRaw(bindings.colorRep, 1)));
+        params.numColors   = Math.max(1, Math.round(readRaw(bindings.numColors, 3)));
+
+        // Unused colour slots default to #000000; a black stop would just drag
+        // the whole gradient dark, so drop them off the end.
+        const cols = bindings.colors.map(el => hexToRgb(el.value));
+        while (cols.length) {
+            const last = cols[cols.length - 1];
+            if (last.r || last.g || last.b) break;
+            cols.pop();
+        }
+        params.colors = cols;
+        params.stops  = resolveStops(cols);
+
+        if (!rafId) draw(animMs);   // keep the static frame current while paused
+    }
+
+    function resolveStops(cols) {
+        const raw = bindings.palette ? String(bindings.palette.value || '') : '';
+        if (!raw) return cols.length ? cols : null;
+        const low = raw.trim().toLowerCase();
+        if (low === '* color 1')    return cols.slice(0, 1);
+        if (low === '* colors 1&2') return cols.slice(0, 2);
+        if (low === '* color gradient' || low === '* colors only') return cols.slice();
+        return paletteStops(low);   // null for Default / unknown → hue sweep
+    }
+
+    // ── Preview loop ─────────────────────────────────────────────
+    const previewWrap = document.getElementById('pixel-preview');
+    const previewCard = document.getElementById('effect-params-card');
+    let canvas = null, ctx = null, img = null;
+    let renderer = null, rafId = null;
+    let animMs = 0, lastTs = 0, acc = 0;
+    let previewEnabled = true, onScreen = true, reducedMotion = false;
+
+    function draw(t) {
+        if (!ctx || !renderer) return;
+        const d = img.data, n = PIXEL_COUNT, br = params.brightness;
+        for (let i = 0; i < n; i++) {
+            renderer(OUT, i, n, t, params);
+            const o = i << 2;
+            d[o]     = OUT.r * br;      // Uint8ClampedArray clamps and rounds
+            d[o + 1] = OUT.g * br;
+            d[o + 2] = OUT.b * br;
+            d[o + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+    }
+
+    function frame(ts) {
+        rafId = requestAnimationFrame(frame);
+        const dt = Math.min(ts - lastTs, 200);   // clamp so resume cannot teleport
+        lastTs = ts;
+        acc += dt;
+        if (acc < FRAME_MS) return;
+        acc = 0;                                 // never catch up — a skipped frame stays skipped
+        animMs += dt;
+        draw(animMs);
+    }
+
+    function startLoop() {
+        if (rafId !== null) return;     // idempotent — without this, clicking through
+        lastTs = performance.now();     // effects stacks concurrent rAF loops
+        acc = 0;
+        rafId = requestAnimationFrame(frame);
+    }
+
+    function stopLoop() {
+        if (rafId === null) return;
+        cancelAnimationFrame(rafId);
+        rafId = null;
+    }
+
+    function shouldRun() {
+        return previewEnabled && renderer !== null && !reducedMotion
+            && previewCard.classList.contains('open')
+            && !document.hidden && onScreen;
+    }
+
+    function syncPreview() {
+        if (shouldRun()) { startLoop(); return; }
+        stopLoop();
+        draw(animMs);                   // a frozen frame beats a black box
+    }
+
+    function setPreviewEffect(effectName) {
+        const next = effectName ? (EFFECT_FX[normEffect(effectName)] || null) : null;
+        if (next !== renderer) { renderer = next; animMs = 0; }
+        if (previewWrap) previewWrap.hidden = !renderer;
+    }
+
+    function initPreview() {
+        canvas = document.getElementById('pixel-strip');
+        if (!canvas || !canvas.getContext) throw new Error('no canvas');
+        canvas.width  = PIXEL_COUNT;   // set once — assigning inside the loop
+        canvas.height = 1;             // would reallocate the backing store
+        ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) throw new Error('no 2d context');
+        img = ctx.createImageData(PIXEL_COUNT, 1);   // allocated once, mutated in place
+
+        const chk = document.getElementById('chk-preview-enabled');
+        try { previewEnabled = localStorage.getItem(PREVIEW_KEY) !== '0'; } catch (e) {}
+        chk.checked = previewEnabled;
+        chk.addEventListener('change', () => {
+            previewEnabled = chk.checked;
+            try { localStorage.setItem(PREVIEW_KEY, previewEnabled ? '1' : '0'); } catch (e) {}
+            syncPreview();
+        });
+
+        // renderArgs() empties this form but never replaces it, so one delegated
+        // pair of listeners attached here survives every effect switch.
+        const form = document.getElementById('effect-args-form');
+        form.addEventListener('input',  refreshParams);
+        form.addEventListener('change', refreshParams);
+
+        document.addEventListener('visibilitychange', syncPreview);
+        window.addEventListener('pagehide', stopLoop);
+        window.addEventListener('pageshow', syncPreview);
+        // Deliberately NOT window.blur: opening a native <input type="color">
+        // picker blurs the window, which would freeze the preview at exactly the
+        // moment the user is dragging the colour they want to see.
+
+        if (window.IntersectionObserver) {
+            new IntersectionObserver(entries => {
+                onScreen = entries[entries.length - 1].isIntersecting;
+                syncPreview();
+            }, { threshold: 0 }).observe(canvas);
+        }
+
+        const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (mq) {
+            reducedMotion = mq.matches;
+            const onMq = () => { reducedMotion = mq.matches; syncPreview(); };
+            if (mq.addEventListener) mq.addEventListener('change', onMq);
+            else if (mq.addListener) mq.addListener(onMq);
+        }
+    }
+
+    try {
+        initPreview();
+    } catch (err) {
+        // The preview shares this closure with Run/Stop/presets — never let it
+        // take the page down.
+        if (previewWrap) previewWrap.hidden = true;
+        ctx = null;
     }
 
     // ── Select effect ────────────────────────────────────────────
@@ -603,50 +1149,99 @@
             const data = await apiFetch('/api/effects/args/' + encodeURIComponent(effectName));
             renderArgs(data.args || [], savedArgs);
             document.getElementById('effect-params-card').classList.add('open');
+            setPreviewEffect(effectName);
+            syncPreview();
             document.getElementById('effect-params-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } catch (err) {
+            setPreviewEffect(null);
             showToast('Could not load effect parameters: ' + err.message, 'error');
         }
     }
 
+    // ── Output gate ──────────────────────────────
+    // Nothing reaches the lights until the user explicitly enables output, so
+    // browsing effects and dialling in parameters never disturbs a running show
+    // (the pixel strip is a local canvas, not live output).  Deliberately not
+    // persisted: every page load starts with the gate shut.
+    let outputEnabled = false;
+
+    const btnOutput     = document.getElementById('btn-output');
+    const btnRunEffect  = document.getElementById('btn-run-effect');
+    const btnStopEffect = document.getElementById('btn-stop-effect');
+
+    function syncOutputButton() {
+        btnOutput.textContent = outputEnabled
+            ? '\u25A0 Disable Output To Lights'
+            : '\u25B6 Enable Output To Lights';
+        btnOutput.classList.toggle('live', outputEnabled);
+        // Show the gate rather than only enforcing it.
+        btnRunEffect.disabled  = !outputEnabled;
+        btnStopEffect.disabled = !outputEnabled;
+    }
+    syncOutputButton();
+
+    btnOutput.addEventListener('click', async () => {
+        btnOutput.disabled = true;
+        try {
+            if (outputEnabled) {
+                // Release the overlay layer.  Playback is left alone so whatever
+                // FPP is scheduled to play shows through again.
+                await apiFetch('/api/overlays/release', 'POST');
+                outputEnabled = false;
+                syncOutputButton();
+                showToast('Output disabled — Lights returning to normal', 'success');
+            } else {
+                // Stops playback and clears the overlay layer in one call.
+                await apiFetch('/api/playlists/stop', 'POST');
+                // Flip only once the stop has landed, so a failed enable leaves
+                // the gate shut rather than half-open.  Run stays explicit:
+                // enabling output does not fire the selected effect.
+                outputEnabled = true;
+                syncOutputButton();
+                showToast('Output enabled — playback stopped', 'success');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btnOutput.disabled = false;
+        }
+    });
+
     // ── Run / Stop ───────────────────────────────────────────────
-    document.getElementById('btn-run-effect').addEventListener('click', async () => {
+    btnRunEffect.addEventListener('click', async () => {
+        if (!outputEnabled) { showToast('Enable output to lights first.', 'error'); return; }
         const models = getSelectedModels();
         if (!models.length) { showToast('Select at least one zone first.', 'error'); return; }
         if (!currentEffect)  { showToast('Select an effect first.', 'error'); return; }
 
-        const btn = document.getElementById('btn-run-effect');
-        btn.disabled = true;
+        btnRunEffect.disabled = true;
         try {
             await apiFetch('/api/effects/run', 'POST', {
                 effect:    currentEffect,
                 models,
                 args:      collectArgs(),
-                multisync: chkMultisync.checked,
-                systems:   getSelectedSystems(),
             });
             showToast(`Running: ${currentEffect}`, 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
-            btn.disabled = false;
+            // Not a bare re-enable: the gate may have closed while this ran.
+            syncOutputButton();
         }
     });
 
-    document.getElementById('btn-stop-effect').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-stop-effect');
-        btn.disabled = true;
+    btnStopEffect.addEventListener('click', async () => {
+        if (!outputEnabled) { showToast('Enable output to lights first.', 'error'); return; }
+        btnStopEffect.disabled = true;
         try {
             await apiFetch('/api/effects/stop', 'POST', {
                 models:    getSelectedModels(),
-                multisync: chkMultisync.checked,
-                systems:   getSelectedSystems(),
             });
             showToast('Effects stopped', 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
-            btn.disabled = false;
+            syncOutputButton();
         }
     });
 
@@ -678,13 +1273,6 @@
 
     async function applyPreset(preset) {
         setSelectedModels(preset.models);
-        if (preset.multisync) {
-            chkMultisync.checked = true;
-            systemsDiv.classList.add('open');
-            document.querySelectorAll('.system-chk').forEach(c => {
-                c.checked = preset.systems.includes(c.value);
-            });
-        }
         await selectEffect(preset.effect_name, preset.args);
     }
 
@@ -700,8 +1288,6 @@
                 effect_name: currentEffect,
                 models:      getSelectedModels(),
                 args:        collectArgs(),
-                multisync:   chkMultisync.checked,
-                systems:     getSelectedSystems(),
             });
             renderPresets([...(document.querySelectorAll('.preset-chip').length
                 ? [] : []), preset]);

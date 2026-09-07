@@ -72,7 +72,7 @@ def set_brightness():
             raise ValueError(f"unexpected processors payload: {type(body).__name__}")
     except Exception as exc:
         current_app.logger.error("Could not read FPP output processors: %s", exc)
-        return jsonify({"error": "Could not read FPP output processors"}), 502
+        return jsonify({"error": "Could not read the controller's output processors"}), 502
 
     processors = [
         p for p in (body.get("outputProcessors") or [])
@@ -93,7 +93,7 @@ def set_brightness():
         r = requests.post(_fpp("/channel/output/processors"), json=payload, timeout=5)
         r.raise_for_status()
     except Exception as exc:
-        return jsonify({"error": f"FPP error: {exc}"}), 502
+        return jsonify({"error": f"Controller error: {exc}"}), 502
 
     # Persist in AppSettings so the slider restores on next page load
     setting = db.session.get(AppSetting, "brightness")

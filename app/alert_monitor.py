@@ -2,6 +2,7 @@
 when a scheduled playlist fails to start within the configured delay."""
 
 import logging
+import re
 import smtplib
 import threading
 import time
@@ -49,6 +50,25 @@ def _load_settings(app):
     with app.app_context():
         from app.models import AppSetting
         return {s.key: s.value for s in AppSetting.query.all()}
+
+
+# Alerts can go to more than one person. Each of these settings holds one
+# recipient, but we still split on commas/semicolons so a list pasted into a
+# single box (the way the old single-recipient field was often used) works.
+_RECIPIENT_KEYS = ("alert_email_to", "alert_email_to_2", "alert_email_to_3")
+_RECIPIENT_SPLIT = re.compile(r"[,;]")
+
+
+def _recipients(settings: dict) -> list[str]:
+    """Every configured alert recipient, de-duplicated, in field order."""
+    out, seen = [], set()
+    for key in _RECIPIENT_KEYS:
+        for addr in _RECIPIENT_SPLIT.split(settings.get(key) or ""):
+            addr = addr.strip()
+            if addr and addr.lower() not in seen:
+                seen.add(addr.lower())
+                out.append(addr)
+    return out
 
 
 def _entry_active_today(entry, today: date) -> bool:
@@ -166,24 +186,24 @@ def _send_email(settings: dict, playlist_name: str):
     user     = (settings.get("alert_smtp_user") or "").strip()
     password = (settings.get("alert_smtp_pass") or "").strip()
     from_addr = (settings.get("alert_email_from") or user).strip()
-    to_addr   = (settings.get("alert_email_to") or "").strip()
+    to_addrs  = _recipients(settings)
 
-    if not all([host, user, password, to_addr]):
+    if not all([host, user, password]) or not to_addrs:
         _logger.warning("Alert monitor: email not configured — skipping alert")
         return
 
     now_str = datetime.now().strftime("%I:%M %p")
-    subject = f"FPP Alert: '{playlist_name}' is not playing"
+    subject = f"Show Alert: '{playlist_name}' is not playing"
     body = (
-        f"FPP Show Alert\n\n"
+        f"Show Alert\n\n"
         f"Playlist '{playlist_name}' was scheduled to start but is not playing as of {now_str}.\n\n"
-        f"Please check your FPP controller.\n"
+        f"Please check your controller.\n"
     )
 
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"]    = from_addr
-    msg["To"]      = to_addr
+    msg["To"]      = ", ".join(to_addrs)
 
     # A schedule alert is one-shot — if this attempt is lost, no one is told
     # the show is dark. Retry a couple of times to ride out transient network
@@ -195,8 +215,15 @@ def _send_email(settings: dict, playlist_name: str):
                 smtp.ehlo()
                 smtp.starttls()
                 smtp.login(user, password)
-                smtp.sendmail(from_addr, [to_addr], msg.as_string())
-            _logger.info("Alert monitor: sent alert to %s", to_addr)
+                refused = smtp.sendmail(from_addr, to_addrs, msg.as_string())
+            delivered = [a for a in to_addrs if a not in refused]
+            _logger.info("Alert monitor: sent alert to %s", ", ".join(delivered))
+            if refused:
+                # The send succeeded for the rest, so don't retry the whole
+                # batch — just say who the server would not take.
+                _logger.error(
+                    "Alert monitor: recipients refused: %s", ", ".join(sorted(refused))
+                )
             return
         except Exception as exc:
             last_error = exc
@@ -209,35 +236,43 @@ def _send_email(settings: dict, playlist_name: str):
 
 
 def send_test_email(app) -> tuple[bool, str]:
-    """Called from the settings API to send a test message. Returns (ok, error_msg)."""
+    """Called from the settings API to send a test message. Returns
+    (ok, detail) — detail is the error on failure, or the recipients it went
+    to on success so the page can name them."""
     settings = _load_settings(app)
     host     = (settings.get("alert_smtp_host") or "").strip()
     port     = _to_int(settings.get("alert_smtp_port"), 587, lo=1, hi=65535)
     user     = (settings.get("alert_smtp_user") or "").strip()
     password = (settings.get("alert_smtp_pass") or "").strip()
     from_addr = (settings.get("alert_email_from") or user).strip()
-    to_addr   = (settings.get("alert_email_to") or "").strip()
+    to_addrs  = _recipients(settings)
 
-    if not all([host, user, password, to_addr]):
+    if not all([host, user, password]) or not to_addrs:
         return False, "Email not fully configured — fill in all fields and save first."
 
     msg = MIMEText(
-        "This is a test alert from your FPP Custom UI.\n\n"
+        "This is a test alert from your lighting control UI.\n\n"
         "If you received this, email alerts are working correctly."
     )
-    msg["Subject"] = "FPP Alert — Test Message"
+    msg["Subject"] = "Show Alert — Test Message"
     msg["From"]    = from_addr
-    msg["To"]      = to_addr
+    msg["To"]      = ", ".join(to_addrs)
 
     try:
         with smtplib.SMTP(host, port, timeout=15) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.login(user, password)
-            smtp.sendmail(from_addr, [to_addr], msg.as_string())
-        return True, ""
+            refused = smtp.sendmail(from_addr, to_addrs, msg.as_string())
     except Exception as exc:
         return False, str(exc)
+
+    # Tell the user which addresses the server would not accept — a silent
+    # "sent" for a typo'd recipient is the whole failure mode this test exists
+    # to catch.
+    if refused:
+        return False, "Rejected by the mail server: " + ", ".join(sorted(refused))
+    return True, ", ".join(to_addrs)
 
 
 def _monitor_loop(app):

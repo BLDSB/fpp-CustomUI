@@ -291,7 +291,7 @@
             <label for="s-site-name">Site Name</label>
             <input type="text" id="s-site-name" maxlength="64"
                    value="{{ settings.get('site_name', '') }}"
-                   placeholder="FPP Control">
+                   placeholder="Lighting Control">
         </div>
 
         <div class="form-field">
@@ -411,20 +411,41 @@
     <div class="settings-card">
         <h2>Backup &amp; Restore</h2>
         <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
-            Download a backup of all settings, color zones, saved colors, and scenes.
-            Restore from a previous backup after a fresh install.
+            A full backup holds everything needed to rebuild this controller — this UI's scenes,
+            colors and playlists, the controller's own settings, outputs, models and schedule, and the
+            sequence and audio files. Restore it onto a fresh controller and the show comes back.
         </p>
+
+        <div id="backup-sections" style="margin-top:0.5rem">
+            <p style="font-size:0.8rem;color:var(--text-dim);margin:0">Checking what is on this controller…</p>
+        </div>
+
+        <p id="backup-total" style="font-size:0.82rem;color:var(--text);margin:0.15rem 0 0;display:none"></p>
+
+        <p style="font-size:0.78rem;color:var(--text-dim);margin:0">
+            The backup file also contains this UI's login PIN and internal token — keep it somewhere safe.
+        </p>
+
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.25rem">
-            <a id="btn-backup" href="{{ (request.script_root or '') + '/api/backup' }}"
-               class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;gap:0.4rem">
-                Download Backup
-            </a>
+            <button type="button" class="btn-save" id="btn-backup">Download Full Backup</button>
             <button type="button" class="btn-save" id="btn-restore"
                     style="background:transparent;border:1px solid var(--accent);color:var(--accent)">
                 Restore from Backup…
             </button>
         </div>
+
+        <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.82rem;color:var(--text-dim)">
+            <input type="checkbox" id="restore-reboot" checked>
+            Reboot the controller when the restore finishes
+        </label>
+
+        <div id="restore-progress" style="display:none;margin-top:0.25rem">
+            <div style="height:6px;background:rgba(255,255,255,0.12);border-radius:3px;overflow:hidden">
+                <div id="restore-bar" style="height:100%;width:0;background:var(--accent);transition:width 0.2s"></div>
+            </div>
+        </div>
         <p id="restore-status" style="font-size:0.8rem;color:var(--text-dim);margin:0;display:none"></p>
+        <ul id="restore-log" style="font-size:0.8rem;margin:0.25rem 0 0;padding-left:1.1rem;display:none"></ul>
     </div>
 
     <!-- Alerts -->
@@ -438,6 +459,7 @@
             (requires 2-Step Verification on your Google account).
             For SMS, enter your carrier's email-to-text address as the recipient
             (e.g. <em>5551234567@vtext.com</em> for Verizon, <em>@txt.att.net</em> for AT&amp;T).
+            Fill in up to three recipients and every alert goes to all of them.
         </p>
 
         <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.9rem">
@@ -488,6 +510,18 @@
                    value="{{ settings.get('alert_email_to', '') | e }}">
         </div>
         <div class="settings-row">
+            <label class="settings-label">Recipient 2</label>
+            <input type="text" id="s-alert-email-to-2" class="settings-input"
+                   placeholder="optional"
+                   value="{{ settings.get('alert_email_to_2', '') | e }}">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Recipient 3</label>
+            <input type="text" id="s-alert-email-to-3" class="settings-input"
+                   placeholder="optional"
+                   value="{{ settings.get('alert_email_to_3', '') | e }}">
+        </div>
+        <div class="settings-row">
             <label class="settings-label">Check Delay</label>
             <div style="display:flex;align-items:center;gap:0.5rem">
                 <input type="number" id="s-alert-delay" class="settings-input"
@@ -511,8 +545,8 @@
         <h2>Color Zones</h2>
         <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
             Rename zones or hide unused ones. These names appear on the Colors page.
-            Zone names here are display-only — the FPP Pixel Overlay Model names
-            (<em>All</em>, <em>Zone 1</em>…<em>Zone 15</em>) must match what's configured in FPP.
+            Zone names here are display-only — the Pixel Overlay Model names
+            (<em>All</em>, <em>Zone 1</em>…<em>Zone 15</em>) must match what's configured on the controller.
         </p>
         <p style="font-size:0.82rem;color:var(--text-dim);margin:0">
             Import a layout from xLights to give each zone its real matrix shape, so
@@ -527,7 +561,7 @@
             </button>
             <button id="btn-create-overlay-models" type="button" class="btn-save"
                     style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
-                Create FPP Overlay Models
+                Create Overlay Models
             </button>
         </div>
     </div>
@@ -671,18 +705,18 @@
 <!-- Create Overlay Models confirmation modal -->
 <div class="modal-backdrop" id="modal-overlay-models" role="dialog" aria-modal="true">
     <div class="modal-box">
-        <h3>Create FPP Pixel Overlay Models</h3>
+        <h3>Create Pixel Overlay Models</h3>
         <p>
-            This writes the pixel overlay models into FPP and restarts fppd.
+            This writes the pixel overlay models to the controller and restarts it.
             Zones with an imported layout get their full matrix shape and channel
-            range. Zones without one keep the channel data already set in FPP —
+            range. Zones without one keep the channel data already set on the controller —
             <strong>nothing you configured there is overwritten</strong>.
         </p>
         <p>
             A zone that has neither is created as an empty placeholder, and
             <strong>you must set its channel data</strong> on the
             <a id="fpp-overlay-link" href="#" target="_blank" rel="noopener noreferrer">
-                FPP Pixel Overlay Models page
+                Pixel Overlay Models page
             </a>
             before it will work.
         </p>
@@ -919,7 +953,7 @@
             if (m.collisions > 0)
                 notes.push(`${m.collisions} node(s) landed on an occupied cell`);
             if (m.channel_mismatch)
-                notes.push(`FPP currently has channel ${m.current_start_channel} × ${m.current_channel_count}`);
+                notes.push(`The controller currently has channel ${m.current_start_channel} × ${m.current_channel_count}`);
             if (m.slot === null)
                 notes.push('No zone available — only Zone 1–15 exist');
 
@@ -994,7 +1028,7 @@
             });
             renderZones(zonesData);
             layoutModal.classList.remove('open');
-            showToast(`Imported ${data.imported} layout(s) — now run Create FPP Overlay Models.`, 'success');
+            showToast(`Imported ${data.imported} layout(s) — now run Create Overlay Models.`, 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
@@ -1003,7 +1037,7 @@
         }
     });
 
-    // ── Create FPP Overlay Models modal ─────────────────────────
+    // ── Create Overlay Models modal ─────────────────────────
     const overlayModal   = document.getElementById('modal-overlay-models');
     const fppOverlayLink = document.getElementById('fpp-overlay-link');
 
@@ -1027,7 +1061,7 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed');
             overlayModal.classList.remove('open');
-            showToast('Overlay models created — update channel data in FPP to activate them.', 'success');
+            showToast('Overlay models created — update channel data on the controller to activate them.', 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
@@ -1037,32 +1071,223 @@
     });
 
     // ── Backup / Restore ────────────────────────────────────────
+    const CHUNK_SIZE = 4 * 1024 * 1024;   // stays under the 8 MB request cap
+
+    function humanSize(bytes) {
+        if (bytes === null || bytes === undefined) return '';
+        if (bytes < 1024) return bytes + ' B';
+        const units = ['kB', 'MB', 'GB', 'TB'];
+        let value = bytes / 1024, i = 0;
+        while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+        return (value < 10 ? value.toFixed(1) : Math.round(value)) + ' ' + units[i];
+    }
+
+    function updateBackupTotal() {
+        const total = document.getElementById('backup-total');
+        let bytes = 0, unknown = false;
+        document.querySelectorAll('#backup-sections input[type=checkbox]:checked').forEach(cb => {
+            if (cb.dataset.bytes === '') unknown = true;
+            else bytes += parseInt(cb.dataset.bytes, 10) || 0;
+        });
+        total.style.display = '';
+        total.textContent = 'Backup size: about ' + humanSize(bytes) + (unknown ? ' plus the controller configuration' : '');
+    }
+
+    async function loadBackupSections() {
+        const box = document.getElementById('backup-sections');
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/backup/survey');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+
+            box.innerHTML = '';
+            const grid = document.createElement('div');
+            grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0.3rem 1rem';
+
+            data.order.forEach(name => {
+                const info = data.sections[name] || {};
+                const label = document.createElement('label');
+                label.style.cssText = 'display:flex;align-items:center;gap:0.45rem;font-size:0.84rem;' +
+                                      (info.available ? '' : 'opacity:0.45');
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = name;
+                cb.checked  = !!info.available;
+                cb.disabled = !info.available;
+                cb.dataset.bytes = (info.bytes === null || info.bytes === undefined) ? '' : String(info.bytes);
+                cb.addEventListener('change', updateBackupTotal);
+
+                let text = data.labels[name] || name;
+                if (!info.available) {
+                    text += ' — none on this controller';
+                } else if (info.bytes !== null && info.bytes !== undefined && info.files > 1) {
+                    text += ' — ' + info.files + ' files, ' + humanSize(info.bytes);
+                } else if (info.bytes !== null && info.bytes !== undefined) {
+                    text += ' — ' + humanSize(info.bytes);
+                }
+
+                label.appendChild(cb);
+                label.appendChild(document.createTextNode(text));
+                grid.appendChild(label);
+            });
+
+            box.appendChild(grid);
+            updateBackupTotal();
+        } catch (err) {
+            box.innerHTML = '<p style="font-size:0.8rem;color:var(--text-dim);margin:0">' +
+                            'Could not read what is on this controller — a backup will include everything.</p>';
+        }
+    }
+    loadBackupSections();
+
+    document.getElementById('btn-backup').addEventListener('click', () => {
+        const picked = [...document.querySelectorAll('#backup-sections input[type=checkbox]:checked')]
+            .map(cb => cb.value);
+        if (!picked.length) {
+            showToast('Pick at least one thing to back up.', 'error');
+            return;
+        }
+        showToast('Building the backup — the download starts when it is ready.', 'success');
+        window.location = (window.APP_ROOT || '') + '/api/backup/full?include=' + encodeURIComponent(picked.join(','));
+    });
+
+    function renderRestoreLog(entries) {
+        const list = document.getElementById('restore-log');
+        list.innerHTML = '';
+        (entries || []).forEach(entry => {
+            const li = document.createElement('li');
+            li.textContent = entry.message;
+            li.style.color = entry.status === 'error' ? 'var(--accent)'
+                           : entry.status === 'warning' ? '#e0a83a'
+                           : entry.status === 'skipped' ? 'var(--text-dim)' : 'var(--text)';
+            list.appendChild(li);
+        });
+        list.style.display = entries && entries.length ? '' : 'none';
+    }
+
+    async function waitForReboot(target, status) {
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const deadline = Date.now() + 5 * 60 * 1000;
+        // Let systemd actually take the box down first — polling immediately
+        // would succeed against the service that is still shutting down.
+        await sleep(15000);
+        while (Date.now() < deadline) {
+            try {
+                // Any answer at all means the UI is serving again; this
+                // redirects to the login page, which is fine as a liveness check.
+                const res = await fetch(target, { cache: 'no-store' });
+                if (res.ok) { window.location = target; return; }
+            } catch (err) {
+                // Still down — keep waiting.
+            }
+            await sleep(4000);
+        }
+        status.textContent = 'The controller is taking longer than usual to come back. '
+                           + 'Reload this page once it is up.';
+    }
+
     document.getElementById('btn-restore').addEventListener('click', () => {
         const picker = document.createElement('input');
         picker.type = 'file';
-        picker.accept = '.json,application/json';
+        picker.accept = '.zip,.json,application/zip,application/json';
         picker.onchange = async () => {
             const file = picker.files[0];
             if (!file) return;
-            const btn    = document.getElementById('btn-restore');
-            const status = document.getElementById('restore-status');
+
+            const isZip = file.name.toLowerCase().endsWith('.zip');
+            const wantsReboot = document.getElementById('restore-reboot').checked;
+            let warning = isZip
+                ? 'Restore this backup?\n\nIt will overwrite this controller’s settings, ' +
+                  'playlists and schedule, and replace the scenes, colors and playlists in this UI.'
+                : 'Restore this backup?\n\nIt will replace the scenes, colors and playlists in this UI.';
+            if (isZip && wantsReboot) {
+                warning += '\n\nThe controller will reboot when it finishes — the show will stop.';
+            }
+            if (!confirm(warning)) return;
+
+            const btn      = document.getElementById('btn-restore');
+            const status   = document.getElementById('restore-status');
+            const progress = document.getElementById('restore-progress');
+            const bar      = document.getElementById('restore-bar');
             btn.disabled = true;
             btn.textContent = 'Restoring…';
             status.style.display = '';
-            status.textContent = 'Uploading backup file…';
-            try {
-                const fd = new FormData();
-                fd.append('file', file);
-                const res  = await fetch((window.APP_ROOT || '') + '/api/restore', { method: 'POST', body: fd });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Restore failed');
-                status.textContent = 'Restore complete — reloading page…';
-                setTimeout(() => location.reload(), 1200);
-            } catch (err) {
+            renderRestoreLog([]);
+
+            const fail = msg => {
+                progress.style.display = 'none';
                 status.textContent = '';
-                showToast('Restore failed: ' + err.message, 'error');
+                showToast('Restore failed: ' + msg, 'error');
                 btn.disabled    = false;
                 btn.textContent = 'Restore from Backup…';
+            };
+
+            try {
+                let data;
+                if (isZip) {
+                    const id = [...crypto.getRandomValues(new Uint8Array(16))]
+                        .map(b => b.toString(16).padStart(2, '0')).join('');
+                    progress.style.display = '';
+                    for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
+                        status.textContent = 'Uploading backup… ' +
+                            humanSize(offset) + ' of ' + humanSize(file.size);
+                        bar.style.width = Math.round(offset / file.size * 100) + '%';
+                        const res = await fetch((window.APP_ROOT || '') +
+                            '/api/restore/chunk?id=' + id + '&offset=' + offset + '&total=' + file.size,
+                            { method: 'POST', body: file.slice(offset, offset + CHUNK_SIZE),
+                              headers: { 'Content-Type': 'application/octet-stream' } });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            return fail(err.error || 'upload failed at ' + humanSize(offset));
+                        }
+                    }
+                    bar.style.width = '100%';
+                    status.textContent = 'Applying the backup — this can take a few minutes…';
+                    const res = await fetch((window.APP_ROOT || '') + '/api/restore/apply',
+                        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id, reboot: wantsReboot }) });
+                    data = await res.json();
+                    if (!res.ok) return fail(data.error || 'restore failed');
+                } else {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    const res = await fetch((window.APP_ROOT || '') + '/api/restore',
+                        { method: 'POST', body: fd });
+                    data = await res.json();
+                    if (!res.ok) return fail(data.error || 'restore failed');
+                }
+
+                progress.style.display = 'none';
+                renderRestoreLog(data.log);
+
+                // Where this browser should end up: the new path if the
+                // restore moved the UI, otherwise back to this page.
+                const target = data.url ? data.url + 'settings' : location.pathname;
+
+                if (data.rebooting) {
+                    btn.textContent = 'Rebooting…';
+                    status.textContent = 'Restore complete — rebooting the controller. '
+                                       + 'This page reloads once it is back (about a minute).';
+                    waitForReboot(target, status);
+                    return;
+                }
+                if (data.url) {
+                    status.textContent = 'Restore complete — this UI has moved to ' + data.url;
+                    setTimeout(() => { window.location = target; }, 2500);
+                    return;
+                }
+                status.textContent = data.reboot_recommended
+                    ? 'Restore complete — reboot the controller to finish applying the controller settings.'
+                    : 'Restore complete — reloading page…';
+                if (data.ok === false) {
+                    showToast('Restore finished with problems — see the list below.', 'error');
+                    btn.disabled    = false;
+                    btn.textContent = 'Restore from Backup…';
+                } else {
+                    setTimeout(() => location.reload(), data.reboot_recommended ? 4000 : 1200);
+                }
+            } catch (err) {
+                fail(err.message);
             }
         };
         picker.click();
@@ -1281,6 +1506,8 @@
                     alert_smtp_pass:     document.getElementById('s-alert-smtp-pass').value.trim(),
                     alert_email_from:    document.getElementById('s-alert-email-from').value.trim(),
                     alert_email_to:      document.getElementById('s-alert-email-to').value.trim(),
+                    alert_email_to_2:    document.getElementById('s-alert-email-to-2').value.trim(),
+                    alert_email_to_3:    document.getElementById('s-alert-email-to-3').value.trim(),
                     alert_delay_minutes: document.getElementById('s-alert-delay').value.trim(),
                 }),
             });
@@ -1305,7 +1532,7 @@
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed');
-            showToast('Test email sent — check your inbox', 'success');
+            showToast('Test email sent to ' + (data.sent_to || 'your recipients'), 'success');
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
@@ -1336,7 +1563,7 @@
                 return 'Use 1-32 characters: letters, numbers, hyphen or underscore.';
             }
             if (RESERVED.indexOf(value.toLowerCase()) !== -1) {
-                return '"' + value + '" is reserved by FPP — pick a different name.';
+                return '"' + value + '" is reserved by the controller — pick a different name.';
             }
             return null;
         }

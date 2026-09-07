@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}FPP Control{% endblock %}</title>
+    <title>{% block title %}Lighting Control{% endblock %}</title>
     <style>
         /* ── Reset & Design Tokens ─────────────────────────────────── */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -345,7 +345,7 @@
             {% if site_settings.get('logo_url') %}
             <img src="{{ site_settings.logo_url | e }}" alt="Logo" class="nav-logo">
             {% endif %}
-            <span class="nav-wordmark">{{ site_settings.get('site_name') or 'FPP Control' }}</span>
+            <span class="nav-wordmark">{{ site_settings.get('site_name') or 'Lighting Control' }}</span>
         </a>
         <button id="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
         <ul class="nav-main">
@@ -357,6 +357,7 @@
                 <ul class="nav-dropdown-menu">
                     <li><a href="{{ url_for('colors.colors_page') }}">Color</a></li>
                     <li><a href="{{ url_for('effects.effects_page') }}">Effects</a></li>
+                    <li><a href="{{ url_for('custom_playlists.playlists_page') }}">Playlists</a></li>
                 </ul>
             </li>
             <li><a href="{{ url_for('scheduler.schedule_page') }}">Schedule</a></li>

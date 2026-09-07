@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ site_settings.get('site_name') or 'FPP Control' }} — Setup</title>
+    <title>{{ site_settings.get('site_name') or 'Lighting Control' }} — Setup</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -194,7 +194,7 @@
     <div class="login-wrap">
         <div class="login-card">
 
-            <div class="login-title">{{ site_settings.get('site_name') or 'FPP Control' }}</div>
+            <div class="login-title">{{ site_settings.get('site_name') or 'Lighting Control' }}</div>
 
             {% if blocked %}
             <div class="error">
@@ -367,7 +367,7 @@
         function nameProblem(value) {
             if (!NAME_RE.test(value)) return 'Letters, numbers, hyphen and underscore only.';
             if (RESERVED.indexOf(value.toLowerCase()) !== -1) {
-                return '"' + value + '" is reserved by FPP — pick a different name.';
+                return '"' + value + '" is reserved by the controller — pick a different name.';
             }
             return null;
         }

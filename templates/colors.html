@@ -120,19 +120,31 @@
     }
     .btn-secondary:hover { background: var(--accent); color: #fff; }
 
-    .btn-stop {
+    .btn-output {
         width: 100%;
         background: transparent;
-        color: var(--amber);
-        border: 1px solid var(--amber);
+        color: var(--text-dim);
+        border: 1px solid var(--border-dim);
         border-radius: 6px;
         padding: 0.55rem 1rem;
         font-size: 0.88rem;
         font-weight: 600;
         cursor: pointer;
-        transition: background 0.15s, color 0.15s;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
-    .btn-stop:hover { background: var(--amber); color: var(--bg); }
+    .btn-output:hover { color: var(--text); border-color: var(--text); }
+    /* Output is live — the same green the Loop and schedule pills use for "on". */
+    .btn-output.live {
+        background: rgba(46,204,113,0.15);
+        color: #2ecc71;
+        border-color: rgba(46,204,113,0.35);
+    }
+    .btn-output.live:hover {
+        background: rgba(46,204,113,0.28);
+        color: #2ecc71;
+        border-color: rgba(46,204,113,0.5);
+    }
+    .btn-output:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn-clear {
         width: 100%;
@@ -327,7 +339,7 @@
         <button id="btn-save" class="btn-secondary">&#9733; Save Custom Color</button>
         <button id="btn-scene-save" class="btn-scene-save">&#9670; Save as Scene</button>
         <button id="btn-clear" class="btn-clear">&#9711; Clear All Zones</button>
-        <button id="btn-stop" class="btn-stop">&#9632; Stop / Resume Playlist</button>
+        <button id="btn-output" class="btn-output">&#9654; Enable Output To Lights</button>
     </div>
 
     <!-- Right: saved buttons + scenes -->
@@ -354,7 +366,7 @@
     const btnSave      = document.getElementById('btn-save');
     const btnSceneSave = document.getElementById('btn-scene-save');
     const btnClear     = document.getElementById('btn-clear');
-    const btnStop      = document.getElementById('btn-stop');
+    const btnOutput    = document.getElementById('btn-output');
     const savedGrid    = document.getElementById('saved-grid');
     const scenesGrid   = document.getElementById('scenes-grid');
     const zonePills    = document.getElementById('zone-pills');
@@ -370,6 +382,25 @@
     zonePills.querySelectorAll('.zone-pill').forEach(p => {
         zoneColors[p.dataset.model] = colorInput.value;
     });
+
+    // ── Output gate ─────────────────────────────────
+    // Nothing reaches the lights until the user explicitly enables output, so
+    // opening this page or building a scene never disturbs a running show.
+    // Deliberately not persisted: every page load starts with the gate shut.
+    let outputEnabled = false;
+
+    // Zones the user has actually set this session.  zoneColors is pre-seeded
+    // above with the picker's default for *every* pill, so pushing all of it on
+    // enable would paint zones the user never touched.
+    const touchedModels = new Set();
+
+    function syncOutputButton() {
+        btnOutput.textContent = outputEnabled
+            ? '\u25A0 Disable Output To Lights'
+            : '\u25B6 Enable Output To Lights';
+        btnOutput.classList.toggle('live', outputEnabled);
+    }
+    syncOutputButton();
 
     function updateZoneCount() {
         const n = activeModels.size;
@@ -450,7 +481,10 @@
     let _sendTimer = null;
     function sendColor(hex) {
         clearTimeout(_sendTimer);
+        if (!outputEnabled) return;
         _sendTimer = setTimeout(async () => {
+            // Re-checked here too: the gate can close while a send is pending.
+            if (!outputEnabled) return;
             try {
                 await Promise.all(
                     [...activeModels].map(model =>
@@ -463,11 +497,22 @@
         }, 120);
     }
 
+    // Push everything built while the gate was shut.  Zone pills never include
+    // the "All" model (colors_page filters slot 0 out), so these sends cannot
+    // deactivate one another and are safe to run in parallel.
+    async function pushTouchedZones() {
+        const models = [...touchedModels];
+        if (!models.length) return;
+        await Promise.all(models.map(model =>
+            apiFetch('/colors/send', 'POST', { hex: zoneColors[model], model })
+        ));
+    }
+
     // ── Color picker — auto-send on change ─────────────────────
     function onColorChange() {
         const hex = colorInput.value;
         hexDisplay.textContent = hex.toUpperCase();
-        activeModels.forEach(model => { zoneColors[model] = hex; });
+        activeModels.forEach(model => { zoneColors[model] = hex; touchedModels.add(model); });
         sendColor(hex);
     }
     colorInput.addEventListener('input', onColorChange);
@@ -477,11 +522,14 @@
     btnClear.addEventListener('click', async () => {
         btnClear.disabled = true;
         try {
-            await apiFetch('/colors/stop', 'POST');
+            // With the gate shut this is a local reset only — there is nothing
+            // to clear on the lights, because nothing was ever sent.
+            if (outputEnabled) await apiFetch('/colors/stop', 'POST');
             // Reset every zone to black in the JS state
             zonePills.querySelectorAll('.zone-pill').forEach(p => {
                 zoneColors[p.dataset.model] = '#000000';
             });
+            touchedModels.clear();
             colorInput.value = '#000000';
             hexDisplay.textContent = '#000000';
             showToast('All zones cleared', 'success');
@@ -492,16 +540,32 @@
         }
     });
 
-    // ── Stop overlay / resume playlist ────────────────────────
-    btnStop.addEventListener('click', async () => {
-        btnStop.disabled = true;
+    // ── Output gate toggle ────────────────────────────
+    btnOutput.addEventListener('click', async () => {
+        btnOutput.disabled = true;
         try {
-            await apiFetch('/colors/stop', 'POST');
-            showToast('Overlay stopped — Lights returning to normal', 'success');
+            if (outputEnabled) {
+                clearTimeout(_sendTimer);
+                // Release the overlay only.  Playback is left alone so whatever
+                // FPP is scheduled to play shows through again.
+                await apiFetch('/api/overlays/release', 'POST');
+                outputEnabled = false;
+                syncOutputButton();
+                showToast('Output disabled — Lights returning to normal', 'success');
+            } else {
+                // Stops playback and clears the overlay layer in one call.
+                await apiFetch('/api/playlists/stop', 'POST');
+                // Flip only once the stop has landed, so a failed enable leaves
+                // the gate shut rather than half-open.
+                outputEnabled = true;
+                syncOutputButton();
+                await pushTouchedZones();
+                showToast('Output enabled — playback stopped', 'success');
+            }
         } catch (err) {
             showToast(err.message, 'error');
         } finally {
-            btnStop.disabled = false;
+            btnOutput.disabled = false;
         }
     });
 
@@ -560,8 +624,8 @@
             const hex = applyBtn.dataset.hex;
             colorInput.value = hex;
             hexDisplay.textContent = hex.toUpperCase();
-            activeModels.forEach(model => { zoneColors[model] = hex; });
-            await sendColor(hex);
+            activeModels.forEach(model => { zoneColors[model] = hex; touchedModels.add(model); });
+            sendColor(hex);
             return;
         }
 
@@ -651,11 +715,18 @@
             const row = applyBtn.closest('.scene-row');
             const id = row?.dataset.id;
             if (!id) return;
+            if (!outputEnabled) {
+                showToast('Enable output to lights first.', 'error');
+                return;
+            }
             applyBtn.disabled = true;
             try {
                 const result = await apiFetch(`/api/scenes/${id}/apply`, 'POST');
                 // Restore zone picker colors to match the applied scene
-                result.zones.forEach(z => { zoneColors[z.fpp_model] = z.hex_color; });
+                result.zones.forEach(z => {
+                    zoneColors[z.fpp_model] = z.hex_color;
+                    touchedModels.add(z.fpp_model);
+                });
                 const activePill = zonePills.querySelector('.zone-pill.active');
                 if (activePill) {
                     const restored = zoneColors[activePill.dataset.model];

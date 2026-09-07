@@ -49,6 +49,10 @@ class Config:
     # Generate with: python -c "import secrets; print(secrets.token_hex(24))"
     INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024  # 8 MB upload limit
+    # FPP's media directory — sequences, audio and config all live under it.
+    # Overridable so the app still starts (with media backup unavailable) on a
+    # development machine that has no FPP install.
+    FPP_MEDIA_ROOT = os.environ.get("FPP_MEDIA_ROOT", "/home/fpp/media")
     # Public URL path Apache serves this install at (e.g. "cityname" for
     # http://<pi-ip>/cityname). Apache owns the routing; this is read only so
     # the UI can show and change it. Written by fpp-ui-set-path.

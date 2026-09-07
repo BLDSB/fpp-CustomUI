@@ -7,6 +7,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_playlist import build_playlist_def, effect_entries
 from app.models import EffectPreset, get_all_zones
 
 effects_bp = Blueprint("effects", __name__)
@@ -30,12 +31,12 @@ def _str_list(value):
     return [str(v) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
 
 
-def _send_effect(models, effect, args, multisync, systems):
+def _send_effect(models, effect, args):
     """Push an 'Overlay Model Effect' command to FPP. Returns (ok, error)."""
     command = {
         "command": "Overlay Model Effect",
-        "multisyncCommand": multisync,
-        "multisyncHosts": ",".join(systems) if multisync else "",
+        "multisyncCommand": False,
+        "multisyncHosts": "",
         "args": [",".join(models), "Enabled", effect] + [str(a) for a in args],
     }
     try:
@@ -50,52 +51,20 @@ def _send_effect(models, effect, args, multisync, systems):
 def _run_preset(preset):
     """Fire the effect stored in a preset."""
     d = preset.to_dict()
-    return _send_effect(d["models"], d["effect_name"], d["args"], d["multisync"], d["systems"])
+    return _send_effect(d["models"], d["effect_name"], d["args"])
 
 
 def _write_effect_playlist(preset):
     """Register an FPP playlist that runs this preset.
 
-    Mirrors the scene playlist structure in app/routes/scenes.py, which is the
-    shape FPP is known to play correctly: the URL command in mainPlaylist fires
-    the effect through Flask, the 10-second pause keeps FPP's player active
-    (and gives the entry a non-zero duration), and leadOut clears the overlay
-    when the playlist is stopped gracefully — e.g. when the scheduler reaches
-    the entry's endTime with stopType=Graceful.
+    Same shape as a scene playlist; see app/fpp_playlist.py for why it must not
+    be restructured.
     """
-    token = current_app.config.get("INTERNAL_TOKEN", "")
-    apply_url = f"http://localhost:5000/internal/effect/{preset.id}/apply?token={token}"
-
-    def url_cmd(u):
-        return {"type": "command", "enabled": 1, "command": "URL",
-                "args": [u, "GET", ""], "startDelay": 0, "endDelay": 0}
-
-    def overlay_effect(model, state, action):
-        return {"type": "command", "enabled": 1, "command": "Overlay Model Effect",
-                "args": [model, state, action], "startDelay": 0, "endDelay": 0}
-
-    def pause_item(d):
-        return {"type": "pause", "enabled": 1, "duration": d,
-                "startDelay": 0, "endDelay": 0}
-
-    playlist_def = {
-        "name": _playlist_name(preset.name),
-        "version": 4,
-        "repeat": 1,
-        "loopCount": 0,
-        "desc": "FPP UI Effect",
-        "random": 0,
-        "empty": False,
-        "leadIn": [],
-        "mainPlaylist": [
-            url_cmd(apply_url),
-            pause_item(10),
-        ],
-        "leadOut": [
-            pause_item(3),
-            overlay_effect("--All Models--", "Enabled", "Stop Effects"),
-        ],
-    }
+    playlist_def = build_playlist_def(
+        _playlist_name(preset.name),
+        effect_entries(preset.id, 10),
+        "FPP UI Effect",
+    )
     try:
         requests.post(
             _fpp(f"/playlist/{_playlist_name(preset.name)}"),
@@ -183,24 +152,6 @@ def get_fonts():
         return jsonify({"error": str(exc)}), 502
 
 
-@effects_bp.get("/api/effects/systems")
-@login_required
-def get_systems():
-    try:
-        resp = requests.get(_fpp("/fppd/multiSyncSystems"), timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        systems = [
-            {"hostname": s.get("hostname") or s.get("address", ""),
-             "address": s.get("address", "")}
-            for s in (data.get("systems") or [])
-            if s.get("address")
-        ]
-        return jsonify(systems)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
-
-
 @effects_bp.post("/api/effects/run")
 @login_required
 def run_effect():
@@ -208,8 +159,6 @@ def run_effect():
     models    = _str_list(data.get("models"))
     effect    = str(data.get("effect", "")).strip()
     args      = data.get("args", [])
-    multisync = bool(data.get("multisync", False))
-    systems   = _str_list(data.get("systems")) or []
 
     if not isinstance(args, list):
         return jsonify({"error": "args must be a list"}), 400
@@ -218,7 +167,7 @@ def run_effect():
     if not effect:
         return jsonify({"error": "No effect selected"}), 400
 
-    ok, error = _send_effect(models, effect, args, multisync, systems)
+    ok, error = _send_effect(models, effect, args)
     if not ok:
         return jsonify({"error": f"Could not run effect: {error}"}), 502
     return jsonify({"ok": True})
@@ -229,14 +178,12 @@ def run_effect():
 def stop_effect():
     data      = request.get_json(silent=True) or {}
     models    = _str_list(data.get("models")) or []
-    multisync = bool(data.get("multisync", False))
-    systems   = _str_list(data.get("systems")) or []
 
     model_str = ",".join(models) if models else "All"
     command = {
         "command": "Overlay Model Effect",
-        "multisyncCommand": multisync,
-        "multisyncHosts": ",".join(systems) if multisync else "",
+        "multisyncCommand": False,
+        "multisyncHosts": "",
         "args": [model_str, "Enabled", "Stop Effects"],
     }
     try:
@@ -268,18 +215,15 @@ def save_preset():
         return jsonify({"error": "A preset with that name already exists"}), 409
 
     models  = _str_list(data.get("models"))
-    systems = _str_list(data.get("systems"))
     args    = data.get("args", [])
-    if models is None or systems is None or not isinstance(args, list):
-        return jsonify({"error": "models, args and systems must be lists"}), 400
+    if models is None or not isinstance(args, list):
+        return jsonify({"error": "models and args must be lists"}), 400
 
     preset = EffectPreset(
         name=name,
         effect_name=str(data.get("effect_name", ""))[:128],
         models_json=json.dumps(models),
         args_json=json.dumps(args),
-        multisync=bool(data.get("multisync", False)),
-        systems_json=json.dumps(systems),
     )
     db.session.add(preset)
     db.session.commit()
@@ -301,7 +245,12 @@ def delete_preset(preset_id):
 
 @effects_bp.get("/internal/effect/<int:preset_id>/apply")
 def internal_apply_effect(preset_id):
-    """Token-authenticated endpoint for FPP playlists to trigger an effect preset."""
+    """Token-authenticated endpoint for FPP playlists to trigger an effect preset.
+
+    ?clear=1 resets the overlay layer first, so a preceding item's colors or
+    effect do not linger on models this preset does not drive.  Used by built
+    playlists; off by default so standalone effect playlists are unchanged.
+    """
     token = request.args.get("token", "")
     internal_token = current_app.config.get("INTERNAL_TOKEN", "")
 
@@ -313,6 +262,10 @@ def internal_apply_effect(preset_id):
     preset = db.session.get(EffectPreset, preset_id)
     if not preset:
         return jsonify({"error": "Preset not found"}), 404
+
+    if request.args.get("clear") == "1":
+        from app.routes.scenes import _reset_overlays
+        _reset_overlays()
 
     ok, error = _run_preset(preset)
     if not ok:

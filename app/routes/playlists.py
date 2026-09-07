@@ -3,7 +3,9 @@ from urllib.parse import quote
 from flask import Blueprint, current_app, jsonify, request
 
 from app.auth_utils import login_required
-from app.models import OVERLAY_MODELS
+# Shared so the overlay reset lives in one place. It never stops playback —
+# callers that need that call _stop_current() themselves.
+from app.routes.scenes import _reset_overlays
 
 playlists_bp = Blueprint("playlists", __name__)
 
@@ -20,36 +22,6 @@ def _stop_current():
         pass
 
 
-def _stop_all_effects():
-    """Clear any running pixel overlay effect on every model."""
-    try:
-        requests.post(
-            _fpp("/command"),
-            json={
-                "command": "Overlay Model Effect",
-                "multisyncCommand": False,
-                "multisyncHosts": "",
-                "args": ["--All Models--", "Enabled", "Stop Effects"],
-            },
-            timeout=5,
-        )
-    except requests.RequestException:
-        pass
-
-
-def _clear_all_overlays():
-    """Deactivate every overlay model so a playlist has full channel control."""
-    for model in OVERLAY_MODELS:
-        try:
-            requests.put(
-                _fpp(f"/overlays/model/{model}/state"),
-                json={"State": 0},
-                timeout=3,
-            )
-        except requests.RequestException:
-            pass
-
-
 @playlists_bp.get("/api/playlists")
 @login_required
 def list_playlists():
@@ -64,7 +36,7 @@ def list_playlists():
         return jsonify({"playlists": sorted(playlists)})
     except requests.RequestException as exc:
         current_app.logger.error("FPP list playlists error: %s", exc)
-        return jsonify({"error": "Could not reach FPP"}), 502
+        return jsonify({"error": "Could not reach the controller"}), 502
 
 
 @playlists_bp.post("/api/playlists/<name>/play")
@@ -89,8 +61,7 @@ def play_playlist(name):
         preset = EffectPreset.query.filter_by(name=preset_name).first()
         if preset:
             _stop_current()
-            _stop_all_effects()
-            _clear_all_overlays()
+            _reset_overlays()
             ok, error = _run_preset(preset)
             if not ok:
                 return jsonify({"error": f"Could not run effect: {error}"}), 502
@@ -104,16 +75,23 @@ def play_playlist(name):
         scene = Scene.query.filter_by(name=scene_name).first()
         if scene:
             _stop_current()
-            # Clear any running effect so it does not animate over the scene colors.
-            _stop_all_effects()
-            ok, errors = _apply_scene(scene)
+            ok, errors = _apply_scene(scene)  # clears overlays and effects itself
             if not ok:
                 return jsonify({"error": f"Failed zones: {', '.join(errors)}"}), 502
             return jsonify({"ok": True})
 
+    # A randomized playlist is shuffled by us when it is written, so rewrite it
+    # here to get a fresh order on every play. FPP's own random flag can't be
+    # used — see _playlist_entries in app/routes/custom_playlists.py.
+    from app.models import CustomPlaylist
+    from app.routes.custom_playlists import _write_custom_playlist
+    cp = CustomPlaylist.query.filter_by(name=name).first()
+    if cp is not None and cp.random:
+        _write_custom_playlist(cp)
+
     # Regular playlist: stop current, clear overlays, then start via FPP.
     _stop_current()
-    _clear_all_overlays()
+    _reset_overlays()
 
     try:
         data = request.get_json(silent=True) or {}
@@ -132,8 +110,22 @@ def play_playlist(name):
 def stop_playback():
     """Stop FPP playback, clear running effects, and deactivate all overlay models."""
     _stop_current()
-    _stop_all_effects()
-    _clear_all_overlays()
+    _reset_overlays()
+    return jsonify({"ok": True})
+
+
+@playlists_bp.post("/api/overlays/release")
+@login_required
+def release_overlays():
+    """Clear running effects and deactivate every overlay model.
+
+    Deliberately leaves playback alone, so whatever FPP is scheduled to play
+    shows through again.  This is what the Colors and Effects pages call when
+    the user switches output off: /colors/stop deactivates the models but never
+    stops an effect, and /api/effects/stop with no models resolves to "All",
+    which FPP does not read as every model.
+    """
+    _reset_overlays()
     return jsonify({"ok": True})
 
 
@@ -150,7 +142,7 @@ def list_sequences():
         return jsonify({"sequences": sorted(sequences)})
     except requests.RequestException as exc:
         current_app.logger.error("FPP list sequences error: %s", exc)
-        return jsonify({"error": "Could not reach FPP"}), 502
+        return jsonify({"error": "Could not reach the controller"}), 502
 
 
 @playlists_bp.post("/api/sequences/<name>/play")
@@ -169,7 +161,7 @@ def play_sequence(name):
     # Stop whatever is currently playing so the new selection always preempts.
     _stop_current()
 
-    _clear_all_overlays()
+    _reset_overlays()
 
     data = request.get_json(silent=True) or {}
     repeat = bool(data.get("repeat", True))
@@ -226,4 +218,4 @@ def fpp_status():
         return jsonify(resp.json())
     except requests.RequestException as exc:
         current_app.logger.error("FPP status error: %s", exc)
-        return jsonify({"error": "Could not reach FPP"}), 502
+        return jsonify({"error": "Could not reach the controller"}), 502
