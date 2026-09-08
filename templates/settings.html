@@ -453,7 +453,7 @@
         <h2>Alerts</h2>
         <p style="font-size:0.82rem;color:var(--text-dim);margin:0 0 0.75rem">
             Send an email alert if a scheduled playlist is not playing within the
-            configured delay. Uses Gmail with an
+            configured delay, or if the player stops responding altogether. Uses Gmail with an
             <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener"
                style="color:var(--accent)">App Password</a>
             (requires 2-Step Verification on your Google account).
@@ -529,6 +529,12 @@
                        value="{{ settings.get('alert_delay_minutes', '5') | e }}">
                 <span style="font-size:0.82rem;color:var(--text-dim)">minutes after scheduled start</span>
             </div>
+        </div>
+
+        <div id="alert-state" style="font-size:0.82rem;color:var(--text-dim);
+                    border-left:3px solid var(--accent);padding:0.5rem 0.75rem;
+                    margin:0.9rem 0 0.25rem;background:rgba(0,0,0,0.12)">
+            Checking monitor status…
         </div>
 
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
@@ -1514,12 +1520,57 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Save failed');
             showToast('Alert settings saved', 'success');
+            refreshAlertState();
         } catch (err) {
             showToast('Error: ' + err.message, 'error');
         } finally {
             btn.disabled = false;
         }
     });
+
+    async function refreshAlertState() {
+        const box = document.getElementById('alert-state');
+        if (!box) return;
+        try {
+            const res = await fetch((window.APP_ROOT||'') + '/api/alerts/state');
+            const s   = await res.json();
+            if (!res.ok) throw new Error('unavailable');
+
+            if (!s.enabled) {
+                box.innerHTML = '<strong>Alerts are off.</strong> Turn on Enable Alerts '
+                              + 'and save — the Send Test Email button works either way, '
+                              + 'so a successful test does not mean the monitor is running.';
+                return;
+            }
+            const who = s.recipients.length
+                ? s.recipients.length + ' recipient' + (s.recipients.length === 1 ? '' : 's')
+                  + ': ' + s.recipients.join(', ')
+                : 'no recipients configured';
+            let html = '<strong>Alerts are on</strong> — ' + who + '.';
+            if (s.last_poll) html += ' Last checked ' + s.last_poll + '.';
+
+            if (s.fppd_reachable === false) {
+                html += '<br><strong>The player is not responding</strong> — falling back to the '
+                      + 'schedule file. Any show due in the next hour will alert.';
+            } else if (s.watching) {
+                html += '<br>Watching <strong>' + s.watching.playlist + '</strong>, due '
+                      + s.watching.at + '.';
+            } else if (s.fppd_reachable === null) {
+                html += '<br>First check runs about a minute after startup.';
+            } else {
+                html += '<br>Nothing scheduled to watch yet — the player has not reported an '
+                      + 'upcoming playlist.';
+            }
+            s.verifying.forEach(v => {
+                html += '<br>Verifying <strong>' + v.playlist + '</strong> at ' + v.at + '.';
+            });
+            box.innerHTML = html;
+        } catch (err) {
+            box.textContent = 'Could not read monitor status.';
+        }
+    }
+    refreshAlertState();
+    setInterval(refreshAlertState, 30000);
 
     document.getElementById('btn-test-alert').addEventListener('click', async () => {
         const btn = document.getElementById('btn-test-alert');

@@ -894,3 +894,13 @@ def test_alert_email():
     if ok:
         return jsonify({"ok": True, "sent_to": detail})
     return jsonify({"error": detail}), 502
+
+
+@settings_bp.get("/api/alerts/state")
+@login_required
+def alert_state():
+    """What the monitor is watching. A successful test email only proves SMTP
+    works, so without this there is no way to tell an armed monitor from one
+    that is silently watching nothing."""
+    from app.alert_monitor import monitor_state
+    return jsonify(monitor_state(current_app._get_current_object()))
