@@ -176,6 +176,9 @@
         min-width: 28px;
         text-align: right;
     }
+    /* Percentages need more room than a 0-255 readout. */
+    .arg-range-val.wide { min-width: 46px; }
+    .arg-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; }
     .arg-field input[type="text"],
     .arg-field input[type="number"],
     .arg-field select {
@@ -479,6 +482,39 @@
         fontOptions = Array.isArray(fonts) ? fonts : [];
     }).catch(() => {});
 
+    // ── Brightness gain ─────────────────────────────────────────
+    // fppd renders a WLED effect and then scales every pixel by
+    // (brightness / 128), clamping each channel at 255, so FPP's stock default
+    // of 128 is unity gain and not "full brightness" — every WLED effect used
+    // to land on the props at exactly the level the effect itself renders, and
+    // the stock 0-255 slider could only ever double it.  So this arg is driven
+    // as a gain instead: 100% is FPP's default, the slider runs past it, and a
+    // freshly picked effect starts bright.  See app/routes/effects.py, which
+    // owns these numbers and why values above 255 reach the lights.
+    const GAIN = {
+        unity:   {{ gain.unity }},
+        default: {{ gain.default }},
+        min:     {{ gain.min }},
+        max:     {{ gain.max }},
+    };
+
+    // FPP gives every WLED effect a 0-255 "brightness" arg ahead of the
+    // effect's own sliders.  Built-in effects that have a brightness arg scale
+    // it 0-100 against colours the user picked themselves, so they are left
+    // alone — over-driving those would only clip a colour that is already full.
+    function isGainArg(arg) {
+        return arg.type === 'range'
+            && Number(arg.max) === 255
+            && /bright/i.test(String(arg.description || arg.name || ''))
+            && String(currentEffect || '').startsWith('WLED - ');
+    }
+
+    function clampGain(val) {
+        const n = parseInt(val, 10);
+        if (!isFinite(n)) return GAIN.default;
+        return Math.min(GAIN.max, Math.max(GAIN.min, n));
+    }
+
     // ── Arg rendering ────────────────────────────────────────────
     function renderArgs(argDefs, savedValues = []) {
         const form = document.getElementById('effect-args-form');
@@ -486,13 +522,18 @@
         currentArgDefs = argDefs;
 
         argDefs.forEach((arg, idx) => {
-            const savedVal = savedValues[idx] ?? arg.default ?? '';
+            const gainArg  = isGainArg(arg);
+            // A saved preset still wins: the point is a brighter *default*, not
+            // overriding a level somebody dialled in and saved.
+            const savedVal = savedValues[idx] ?? (gainArg ? GAIN.default : arg.default) ?? '';
             const field = document.createElement('div');
             field.className = 'arg-field';
             field.innerHTML = `<span class="arg-label">${escHtml(arg.description)}</span>`;
 
             let input;
-            if (arg.type === 'range') {
+            if (gainArg) {
+                input = makeGainInput(savedVal);
+            } else if (arg.type === 'range') {
                 input = makeRangeInput(arg, savedVal);
             } else if (arg.type === 'color') {
                 input = makeColorInput(arg, savedVal);
@@ -511,6 +552,13 @@
             input.dataset.argIdx = idx;
             input.classList.add('arg-input');
             field.appendChild(input);
+            if (gainArg) {
+                const hint = document.createElement('span');
+                hint.className = 'arg-hint';
+                hint.textContent = '100% is FPP\u2019s normal level. Above 200% the '
+                    + 'brightest parts of the effect clip toward white.';
+                field.appendChild(hint);
+            }
             form.appendChild(field);
         });
 
@@ -534,6 +582,29 @@
         wrap.appendChild(range);
         wrap.appendChild(disp);
         // Return the range input as the .arg-input, but wrap it for display
+        wrap._argInput = range;
+        return wrap;
+    }
+
+    // The gain slider: raw fppd units in, percent of normal on screen.
+    function makeGainInput(val) {
+        const wrap = document.createElement('div');
+        wrap.className = 'arg-range-wrap';
+        const range = document.createElement('input');
+        range.type  = 'range';
+        range.min   = GAIN.min;
+        range.max   = GAIN.max;
+        range.value = clampGain(val);
+        range.classList.add('arg-input');
+        const disp = document.createElement('span');
+        disp.className = 'arg-range-val wide';
+        const show = () => {
+            disp.textContent = Math.round(range.value / GAIN.unity * 100) + '%';
+        };
+        show();
+        range.addEventListener('input', show);
+        wrap.appendChild(range);
+        wrap.appendChild(disp);
         wrap._argInput = range;
         return wrap;
     }
@@ -947,6 +1018,12 @@
 
             if (arg.type === 'color') { bindings.colors.push(el); return; }
             if (arg.type === 'string' && /palette/i.test(desc)) { bindings.palette = el; return; }
+            // Gain, not a 0..1 level: the preview clips the same way the props do.
+            if (isGainArg(arg)) {
+                bindings.brightness = { el: el, unity: GAIN.unity };
+                claimed.add(idx);
+                return;
+            }
 
             for (let j = 0; j < ROLE_RULES.length; j++) {
                 const role = ROLE_RULES[j][0], re = ROLE_RULES[j][1], kind = ROLE_RULES[j][2];
@@ -956,6 +1033,9 @@
                 bindings[role] = (kind === 'bool')
                     ? { el: el }
                     : { el: el, min: Number(arg.min ?? 0), max: Number(arg.max ?? 255) };
+                // A built-in effect's brightness scales its own colours, so its
+                // top of range is full — that is this slider's unity.
+                if (role === 'brightness') bindings[role].unity = Number(arg.max ?? 255);
                 claimed.add(idx);
                 break;
             }
@@ -971,6 +1051,15 @@
         return b.max > b.min ? (v - b.min) / (b.max - b.min) : dflt;
     }
 
+    // Brightness is a multiplier in every flavour we bind: 1 is "as the effect
+    // renders it", and anything above that clips high channels, exactly as fppd
+    // does on the way to the pixels.
+    function readGain(b, dflt) {
+        if (!b || !b.unity) return dflt;
+        const v = parseFloat(b.el.value);
+        return isFinite(v) ? v / b.unity : dflt;
+    }
+
     function readRaw(b, dflt) {
         if (!b) return dflt;
         const v = parseFloat(b.el.value);
@@ -981,7 +1070,7 @@
         params.speed       = readNum(bindings.speed, 0.5);
         params.intensity   = readNum(bindings.intensity, 0.5);
         params.trail       = readNum(bindings.trail, 0.5);
-        params.brightness  = readNum(bindings.brightness, 1);
+        params.brightness  = readGain(bindings.brightness, 1);
         params.gradient    = bindings.gradient    ? bindings.gradient.el.checked    : false;
         params.customColor = bindings.customColor ? bindings.customColor.el.checked : false;
         params.timeMs      = readRaw(bindings.timeMs, 2000);

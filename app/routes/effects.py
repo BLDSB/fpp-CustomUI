@@ -12,6 +12,57 @@ from app.models import EffectPreset, get_all_zones
 
 effects_bp = Blueprint("effects", __name__)
 
+# ── WLED effect brightness ───────────────────────────────────────────────────
+# fppd renders a WLED effect and then scales every pixel by (brightness / 128),
+# clamping each channel at 255 (src/overlays/WLEDEffects.cpp feeding wled.cpp's
+# setPixelColor).  So FPP's stock default of 128 is *unity gain*, not "full
+# brightness": out of the box every WLED effect landed on the props at exactly
+# the level the effect itself renders, which reads as dim on a lit field, and
+# the stock 0-255 slider could only ever double it.
+#
+# The UI therefore drives that arg as a gain: 128 is 100%, the slider runs to
+# 400%, and a freshly picked effect starts at 300%.  fppd does not range-check
+# command args — the min/max on a CommandArg is metadata for its own UI, and
+# ApplyEffectOverlayCommand hands the strings straight to the effect — so a
+# value above 255 is applied as written.  If a future fppd ever clamps it, the
+# gain simply tops out at 200% again, still brighter than the old default.
+WLED_GAIN_UNITY   = 128   # 100% — FPP's own default, and unity gain
+WLED_GAIN_DEFAULT = 384   # 300% — what a newly selected effect starts at
+WLED_GAIN_MIN     = 32    #  25%
+WLED_GAIN_MAX     = 512   # 400%
+
+# Every WLED effect's arg list starts with these two, in this order, before the
+# effect's own sliders (RawWLEDEffect's constructor pushes them unconditionally).
+# The mapping value is what lets the preset lift below confirm it is looking at
+# that layout rather than guessing at a position.
+WLED_BUFFER_MAPS = ("Horizontal", "Vertical", "Horizontal Flipped", "Vertical Flipped")
+WLED_GAIN_ARG_INDEX = 1
+
+
+def lift_legacy_brightness(effect_name, args):
+    """Raise a preset saved at FPP's dim default to the new default gain.
+
+    Returns the rewritten arg list, or None to leave the preset alone.  Only the
+    exact stock value is lifted: anything else is a level somebody chose with the
+    slider, and a preset the user deliberately dimmed must stay dimmed.
+    """
+    if not str(effect_name or "").startswith("WLED - "):
+        return None
+    if not isinstance(args, list) or len(args) <= WLED_GAIN_ARG_INDEX:
+        return None
+    # Not the arg layout this lift understands — don't rewrite a slot blind.
+    if str(args[0]) not in WLED_BUFFER_MAPS:
+        return None
+    try:
+        if int(str(args[WLED_GAIN_ARG_INDEX]).strip()) != WLED_GAIN_UNITY:
+            return None
+    except ValueError:
+        return None
+
+    lifted = list(args)
+    lifted[WLED_GAIN_ARG_INDEX] = str(WLED_GAIN_DEFAULT)
+    return lifted
+
 
 def _fpp(path):
     return f"{current_app.config['FPP_BASE_URL']}{path}"
@@ -88,7 +139,15 @@ def _delete_effect_playlist(preset):
 @login_required
 def effects_page():
     zones = [z.to_dict() for z in get_all_zones() if z.slot != 0 and not z.hidden]
-    return render_template("effects.html", zones=zones)
+    # One source of truth for the gain scale: the page's slider and the startup
+    # preset lift have to agree on what 100% means.
+    gain = {
+        "unity":   WLED_GAIN_UNITY,
+        "default": WLED_GAIN_DEFAULT,
+        "min":     WLED_GAIN_MIN,
+        "max":     WLED_GAIN_MAX,
+    }
+    return render_template("effects.html", zones=zones, gain=gain)
 
 
 @effects_bp.get("/api/effects/list")
