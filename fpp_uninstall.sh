@@ -67,6 +67,16 @@ if [ -d "/var/cache/fpp-ui-pip" ]; then
     echo "✓ pip cache removed."
 fi
 
+# Provisioning marker for the WiFi tethering fallback. The FPP setting itself is
+# deliberately left enabled — reverting it could strand an unreachable
+# controller — so only the marker goes, which means a later reinstall
+# re-asserts tethering rather than silently skipping it.
+if [ -f "/var/lib/fpp-ui/tethering-applied" ]; then
+    rm -f /var/lib/fpp-ui/tethering-applied
+    rmdir /var/lib/fpp-ui 2>/dev/null || true
+    echo "✓ Tethering marker removed."
+fi
+
 # Graceful reload is enough to drop our config, and a failure here must not
 # abort the uninstall (set -e) — FPP still removes the plugin directory next.
 systemctl reload apache2 2>/dev/null || service apache2 reload || \

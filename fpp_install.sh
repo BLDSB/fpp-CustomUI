@@ -139,11 +139,40 @@ fi
 "$SETPATH_BIN" "$UI_PATH"
 echo ""
 
-# ── 6. Fix ownership (venv and new files created as root → hand back to fpp) ──
+# ── 6. FPP WiFi tethering fallback ────────────────────────────────────────────
+# FPP's default tethering mode ("if no connection") walks every wired interface
+# and refuses to start the rescue AP whenever one has carrier. A venue with a
+# live switch but no working DHCP therefore leaves the controller with no
+# address and no AP — unreachable until someone drives out with a card reader.
+# Force tethering on so there is always a way in.
+#
+# Applied once per controller: the marker means a deliberate later change on
+# FPP's Network page is never undone by a plugin upgrade. Takes effect at the
+# next boot.
+FPP_SETTINGS="/home/fpp/media/settings"
+TETHER_MARKER="/var/lib/fpp-ui/tethering-applied"
+
+if [ -f "$TETHER_MARKER" ]; then
+    echo "✓ Tethering already configured on this controller — leaving as-is."
+elif [ ! -f "$FPP_SETTINGS" ]; then
+    echo "⚠ $FPP_SETTINGS not found — skipping tethering fallback."
+else
+    # Lines in FPP's settings file are `Key = "value"` (WriteSettingToFile() in
+    # /opt/fpp/www/common.php). Drop any existing key, then append ours.
+    sed -i '/^EnableTethering[[:space:]]*=/d' "$FPP_SETTINGS"
+    echo 'EnableTethering = "1"' >> "$FPP_SETTINGS"
+    chown fpp:fpp "$FPP_SETTINGS"
+    mkdir -p "$(dirname "$TETHER_MARKER")"
+    : > "$TETHER_MARKER"
+    echo "✓ WiFi tethering enabled — SSID \"FPP\" at http://192.168.8.1/"
+fi
+echo ""
+
+# ── 7. Fix ownership (venv and new files created as root → hand back to fpp) ──
 chown -R fpp:fpp "$PLUGIN_DIR"
 echo ""
 
-# ── 7. Start (or restart) the service now that files/ownership are final ─────
+# ── 8. Start (or restart) the service now that files/ownership are final ─────
 if systemctl restart fpp-ui; then
     echo "✓ fpp-ui service started."
 else
