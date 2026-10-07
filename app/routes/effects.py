@@ -8,7 +8,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from app import db
 from app.auth_utils import login_required
 from app.fpp_playlist import build_playlist_def, effect_entries
-from app.models import EffectPreset, get_all_zones
+from app.models import EffectPreset, expand_overlay_models, get_all_zones
 
 effects_bp = Blueprint("effects", __name__)
 
@@ -37,7 +37,8 @@ def _send_effect(models, effect, args):
         "command": "Overlay Model Effect",
         "multisyncCommand": False,
         "multisyncHosts": "",
-        "args": [",".join(models), "Enabled", effect] + [str(a) for a in args],
+        "args": [",".join(expand_overlay_models(models)), "Enabled", effect]
+                + [str(a) for a in args],
     }
     try:
         resp = requests.post(_fpp("/command"), json=command, timeout=10)
@@ -179,7 +180,7 @@ def stop_effect():
     data      = request.get_json(silent=True) or {}
     models    = _str_list(data.get("models")) or []
 
-    model_str = ",".join(models) if models else "All"
+    model_str = ",".join(expand_overlay_models(models)) if models else "All"
     command = {
         "command": "Overlay Model Effect",
         "multisyncCommand": False,

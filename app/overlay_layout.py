@@ -21,6 +21,7 @@ channel and its position from its coordinates, upstream xLights complexity
 cannot affect the result.
 """
 
+import re
 import statistics
 
 # fppd truncates a custom model past this many cells.
@@ -306,3 +307,44 @@ def to_fpp_model(name, grid):
         "xLights": False,
         "data": grid["data"],
     }
+
+
+def _group_key(name):
+    """A model name with its trailing number stripped: "Inside 12" -> "inside"."""
+    base = re.sub(r"[\s_\-]*\d+$", "", name or "").strip().lower()
+    return base or (name or "").lower()
+
+
+def suggest_groups(names, max_groups):
+    """Assign each model, given in start-channel order, to a zone group.
+
+    Returns ``(labels, group_of)``: one label per group (in order) and, for each
+    input name, its 0-based group index.  With no more models than groups every
+    model keeps its own zone.  Otherwise models sharing a name prefix are
+    grouped ("Inside 1".."Inside 16" -> "Inside"); if that still needs too many
+    groups, neighbours in channel order are merged evenly instead.
+    """
+    n = len(names)
+    if n <= max_groups:
+        return list(names), list(range(n))
+
+    keys, group_of = [], []
+    for name in names:
+        key = _group_key(name)
+        if key not in keys:
+            keys.append(key)
+        group_of.append(keys.index(key))
+
+    if len(keys) <= max_groups:
+        labels = []
+        for key in keys:
+            first = next(nm for nm, g in zip(names, group_of) if keys[g] == key)
+            labels.append(re.sub(r"[\s_\-]*\d+$", "", first).strip() or first)
+        return labels, group_of
+
+    group_of = [i * max_groups // n for i in range(n)]
+    labels = []
+    for g in range(max_groups):
+        members = [nm for nm, gi in zip(names, group_of) if gi == g]
+        labels.append(f"{members[0]} - {members[-1]}" if len(members) > 1 else members[0])
+    return labels, group_of

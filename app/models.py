@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from app import db
 
@@ -14,7 +15,11 @@ def _loads_list(raw):
         return []
     return val if isinstance(val, list) else []
 
-OVERLAY_MODELS = {"All"} | {f"Zone {i}" for i in range(1, 16)}
+MAX_ZONES = 15
+OVERLAY_MODELS = {"All"} | {f"Zone {i}" for i in range(1, MAX_ZONES + 1)}
+
+# "Zone 3.2": the second xLights model grouped into Zone 3 (see ZoneMember).
+_MEMBER_NAME_RE = re.compile(r"^Zone (\d+)\.(\d+)$")
 
 
 class SavedColor(db.Model):
@@ -113,6 +118,70 @@ class ZoneLayout(db.Model):
     def to_dict(self, include_data=False):
         out = {
             "slot": self.slot,
+            "fpp_model_name": self.fpp_model_name,
+            "source_name": self.source_name,
+            "width": self.width,
+            "height": self.height,
+            "node_count": self.node_count,
+            "start_channel": self.start_channel,
+            "channel_count": self.channel_count,
+            "channels_per_node": self.channels_per_node,
+            "imported_at": self.imported_at,
+        }
+        if include_data:
+            out["data"] = self.data
+        return out
+
+
+class ZoneMember(db.Model):
+    """One xLights model inside a grouped zone.
+
+    A zone holding several models has one row here per model instead of a
+    ZoneLayout row. Each member becomes its own FPP overlay model named
+    "Zone <slot>.<position>"; the UI still shows one zone, and colors, scenes
+    and effects fan out to the members (see expand_overlay_models). A zone with
+    a single model keeps using ZoneLayout, so ungrouped setups are unchanged.
+
+    Its own table for the same reason as ZoneLayout: create_all() never adds
+    columns to an existing table.
+    """
+    __tablename__ = "zone_members"
+
+    id = db.Column(db.Integer, primary_key=True)
+    slot = db.Column(db.Integer, nullable=False, index=True)
+    position = db.Column(db.Integer, nullable=False)  # 1-based within the zone
+    source_name = db.Column(db.String(64), nullable=True)
+    width = db.Column(db.Integer, nullable=False)
+    height = db.Column(db.Integer, nullable=False)
+    node_count = db.Column(db.Integer, nullable=False)
+    start_channel = db.Column(db.Integer, nullable=False)
+    channel_count = db.Column(db.Integer, nullable=False)
+    channels_per_node = db.Column(db.Integer, nullable=False, default=3)
+    data = db.Column(db.Text, nullable=False)
+    imported_at = db.Column(db.String(32), nullable=True)
+
+    @property
+    def fpp_model_name(self):
+        return f"Zone {self.slot}.{self.position}"
+
+    def to_grid(self):
+        """The dict shape app.overlay_layout produces and consumes."""
+        return {
+            "width": self.width,
+            "height": self.height,
+            "node_count": self.node_count,
+            "placed": self.node_count,
+            "collisions": 0,
+            "start_channel": self.start_channel,
+            "channel_count": self.channel_count,
+            "channels_per_node": self.channels_per_node,
+            "data": self.data,
+        }
+
+    def to_dict(self, include_data=False):
+        out = {
+            "slot": self.slot,
+            "position": self.position,
             "fpp_model_name": self.fpp_model_name,
             "source_name": self.source_name,
             "width": self.width,
@@ -255,12 +324,78 @@ class CustomPlaylistItem(db.Model):
         }
 
 
+def is_managed_overlay(name):
+    """True for an overlay model name this app owns: All, Zone N, or Zone N.M."""
+    if name in OVERLAY_MODELS:
+        return True
+    m = _MEMBER_NAME_RE.match(name or "")
+    return bool(m) and 1 <= int(m.group(1)) <= MAX_ZONES
+
+
+def all_is_virtual():
+    """True when "All" is not a real overlay model but a fan-out over the zones.
+
+    A single overlay model has one channels-per-node value, so a show mixing
+    3-channel (RGB) and 4-channel (RGBW) models has no correct whole-display
+    composite. The import then stores none, and "All" drives every zone's
+    models instead. An install that never imported keeps its own "All".
+    """
+    if ZoneLayout.query.filter_by(slot=0).first():
+        return False
+    return bool(
+        ZoneMember.query.first()
+        or ZoneLayout.query.filter(ZoneLayout.slot > 0).first()
+    )
+
+
+def _members_by_slot():
+    out = {}
+    for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all():
+        out.setdefault(m.slot, []).append(m.fpp_model_name)
+    return out
+
+
+def all_overlay_models():
+    """Every overlay model this app drives, group members included."""
+    names = set(OVERLAY_MODELS)
+    for members in _members_by_slot().values():
+        names.update(members)
+    return names
+
+
+def expand_overlay_models(names):
+    """Swap each grouped zone for its member overlay models.
+
+    Zones without members, and names that aren't zones at all ("All",
+    "--All Models--"), pass through untouched. Order is kept, duplicates dropped.
+    """
+    members = _members_by_slot()
+    virtual_all = "All" in names and all_is_virtual()
+    laid_out = (
+        {l.slot for l in ZoneLayout.query.filter(ZoneLayout.slot > 0).all()}
+        if virtual_all else set()
+    )
+    out = []
+    for name in names:
+        m = re.match(r"^Zone (\d+)$", name or "")
+        if name == "All" and virtual_all:
+            targets = []
+            for slot in range(1, MAX_ZONES + 1):
+                targets += members.get(slot) or ([f"Zone {slot}"] if slot in laid_out else [])
+        else:
+            targets = members.get(int(m.group(1))) if m else None
+        for t in (targets or [name]):
+            if t not in out:
+                out.append(t)
+    return out
+
+
 def get_all_zones():
     """Return all 16 zones in slot order, seeding defaults on first call."""
     existing = {z.slot: z for z in Zone.query.all()}
     zones = []
     needs_commit = False
-    for slot in range(16):
+    for slot in range(MAX_ZONES + 1):
         if slot not in existing:
             name = "All" if slot == 0 else f"Zone {slot}"
             z = Zone(slot=slot, display_name=name, hidden=False)
@@ -281,7 +416,7 @@ def get_all_zones():
             _logger.warning("Zone seed commit failed (likely concurrent seed): %s", exc)
             existing = {z.slot: z for z in Zone.query.all()}
             zones = []
-            for slot in range(16):
+            for slot in range(MAX_ZONES + 1):
                 z = existing.get(slot)
                 if z is None:
                     name = "All" if slot == 0 else f"Zone {slot}"

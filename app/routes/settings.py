@@ -12,8 +12,9 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from app import db
 from app.auth_utils import login_required
 from app.models import (
-    OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
-    EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, get_all_zones,
+    MAX_ZONES, OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
+    EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, ZoneMember,
+    all_is_virtual, get_all_zones, is_managed_overlay,
 )
 from app import overlay_layout
 from app import ui_path as ui_path_mod
@@ -48,6 +49,11 @@ def settings_page():
             settings[key] = ui_path_mod.reanchor_upload_url(settings[key])
     zones = [z.to_dict() for z in get_all_zones() if z.slot != 0]
     layouts = {l.slot: l.to_dict() for l in ZoneLayout.query.all()}
+    grouped = {}
+    for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all():
+        grouped.setdefault(m.slot, []).append(m.source_name or f"model {m.position}")
+    for slot, names in grouped.items():
+        layouts[slot] = {"slot": slot, "members": len(names), "source_name": ", ".join(names)}
     return render_template(
         "settings.html", settings=settings, zones=zones, layouts=layouts,
         ui_path=ui_path_mod.current_path(),
@@ -168,7 +174,7 @@ def save_zones():
 
     for item in data:
         slot = item.get("slot")
-        if not isinstance(slot, int) or slot < 0 or slot > 15:
+        if not isinstance(slot, int) or slot < 0 or slot > MAX_ZONES:
             continue
         name = str(item.get("display_name") or "").strip()
         if not name or len(name) > 64:
@@ -212,6 +218,9 @@ def _derive_from_map():
 
     Models are matched to slots in start-channel order, which is how the zones
     were laid out in the first place.  Slot 0 gets the whole-display composite.
+    When there are more models than zones, models are grouped (by name prefix,
+    then by channel order) so several share a slot instead of being dropped;
+    each entry's grid carries its suggested ``group_label``.
     Returns (entries, error_response_or_None).
     """
     if not os.path.exists(DISPLAY_MAP_PATH):
@@ -234,16 +243,18 @@ def _derive_from_map():
     grids = [(m, overlay_layout.derive_grid(m)) for m in models]
     grids.sort(key=lambda pair: pair[1]["start_channel"])
 
-    composite = overlay_layout.derive_composite_grid(models)
+    # One overlay model has a single channels-per-node, so a composite is only
+    # correct when every model agrees. Otherwise "All" fans out over the zones.
+    mixed = len({m.get("channels_per_node") for m in models}) > 1
+    composite = None if mixed else overlay_layout.derive_composite_grid(models)
     if composite:
         entries.append((0, COMPOSITE_KEY, composite))
 
-    for slot, (model, grid) in enumerate(grids, start=1):
-        if slot > 15:
-            # Only Zone 1-15 exist; anything beyond is reported, not assigned.
-            entries.append((None, model["name"], grid))
-            continue
-        entries.append((slot, model["name"], grid))
+    labels, group_of = overlay_layout.suggest_groups(
+        [m["name"] for m, _grid in grids], MAX_ZONES
+    )
+    for (model, grid), group in zip(grids, group_of):
+        entries.append((group + 1, model["name"], dict(grid, group_label=labels[group])))
     return entries, None
 
 
@@ -256,6 +267,11 @@ def layout_preview():
         return err
     current = _current_overlay_models()
 
+    # Where each model is stored now, so the dialog can reopen on the saved
+    # grouping instead of the suggestion.
+    saved_slot = {l.source_name: l.slot for l in ZoneLayout.query.all() if l.source_name}
+    saved_slot.update({m.source_name: m.slot for m in ZoneMember.query.all() if m.source_name})
+
     out = []
     for slot, name, grid in entries:
         model_name = None if slot is None else ("All" if slot == 0 else f"Zone {slot}")
@@ -265,6 +281,8 @@ def layout_preview():
             "source_name": name,
             "fpp_model_name": model_name,
             "is_composite": name == COMPOSITE_KEY,
+            "group_label": grid.get("group_label"),
+            "saved_slot": saved_slot.get(name),
             "width": grid["width"],
             "height": grid["height"],
             "node_count": grid["node_count"],
@@ -281,7 +299,8 @@ def layout_preview():
             "error": overlay_layout.validate_grid(grid, name),
             "mask": overlay_layout.grid_mask(grid["data"]),
         })
-    return jsonify({"models": out, "map_path": DISPLAY_MAP_PATH})
+    mixed = not any(e[1] == COMPOSITE_KEY for e in entries)
+    return jsonify({"models": out, "map_path": DISPLAY_MAP_PATH, "mixed_channels": mixed})
 
 
 @settings_bp.post("/api/fpp/layout/import")
@@ -310,9 +329,10 @@ def layout_import():
         if not isinstance(item, dict):
             continue
         slot = item.get("slot")
-        if not isinstance(slot, int) or slot < 0 or slot > 15:
+        if not isinstance(slot, int) or slot < 0 or slot > MAX_ZONES:
             continue
         source_name = str(item.get("source_name") or "")[:64]
+        group_label = str(item.get("group_label") or "")[:64]
 
         if item.get("data"):
             try:
@@ -333,7 +353,7 @@ def layout_import():
         err = overlay_layout.validate_grid(grid, f"Zone {slot}")
         if err:
             return jsonify({"error": err}), 400
-        staged.append((slot, source_name, grid))
+        staged.append((slot, source_name, grid, group_label))
 
     if not staged:
         return jsonify({"error": "No valid models to import"}), 400
@@ -342,25 +362,64 @@ def layout_import():
     set_names = bool(body.get("set_names"))
     zones = {z.slot: z for z in get_all_zones()}
 
-    for slot, source_name, grid in staged:
-        layout = db.session.get(ZoneLayout, slot)
-        if layout is None:
-            layout = ZoneLayout(slot=slot)
-            db.session.add(layout)
-        layout.source_name = source_name
-        layout.width = grid["width"]
-        layout.height = grid["height"]
-        layout.node_count = grid["placed"]
-        layout.start_channel = grid["start_channel"]
-        layout.channel_count = grid["channel_count"]
-        layout.channels_per_node = grid["channels_per_node"]
-        layout.data = grid["data"]
-        layout.imported_at = now
+    by_slot = {}
+    for entry in staged:
+        by_slot.setdefault(entry[0], []).append(entry)
 
-        if set_names and slot > 0 and source_name and source_name != COMPOSITE_KEY:
+    if body.get("replace"):
+        # The dialog always submits the whole grouping, so a zone it no longer
+        # mentions must be emptied, or its old models would stay behind and
+        # be driven by two zones at once.
+        for stale in range(0, MAX_ZONES + 1):
+            if stale not in by_slot:
+                ZoneLayout.query.filter_by(slot=stale).delete()
+                ZoneMember.query.filter_by(slot=stale).delete()
+
+    for slot, group in by_slot.items():
+        # One model keeps the ZoneLayout row it always had; several become
+        # ZoneMember rows. Whichever representation isn't used is cleared so a
+        # re-import never leaves both behind.
+        if len(group) == 1 or slot == 0:
+            group = group[:1]
+            ZoneMember.query.filter_by(slot=slot).delete()
+            _, source_name, grid, _label = group[0]
+            layout = db.session.get(ZoneLayout, slot)
+            if layout is None:
+                layout = ZoneLayout(slot=slot)
+                db.session.add(layout)
+            layout.source_name = source_name
+            layout.width = grid["width"]
+            layout.height = grid["height"]
+            layout.node_count = grid["placed"]
+            layout.start_channel = grid["start_channel"]
+            layout.channel_count = grid["channel_count"]
+            layout.channels_per_node = grid["channels_per_node"]
+            layout.data = grid["data"]
+            layout.imported_at = now
+        else:
+            ZoneLayout.query.filter_by(slot=slot).delete()
+            ZoneMember.query.filter_by(slot=slot).delete()
+            for position, (_, source_name, grid, _label) in enumerate(group, start=1):
+                db.session.add(ZoneMember(
+                    slot=slot,
+                    position=position,
+                    source_name=source_name,
+                    width=grid["width"],
+                    height=grid["height"],
+                    node_count=grid["placed"],
+                    start_channel=grid["start_channel"],
+                    channel_count=grid["channel_count"],
+                    channels_per_node=grid["channels_per_node"],
+                    data=grid["data"],
+                    imported_at=now,
+                ))
+
+        first_name = group[0][1]
+        label = next((g[3] for g in group if g[3]), "") or first_name
+        if set_names and slot > 0 and label and first_name != COMPOSITE_KEY:
             zone = zones.get(slot)
             if zone is not None:
-                zone.display_name = source_name[:64]
+                zone.display_name = label[:64]
 
     try:
         db.session.commit()
@@ -377,6 +436,7 @@ def layout_import():
 def layout_clear():
     """Drop all stored layouts, returning zones to FPP's rectangular handling."""
     ZoneLayout.query.delete()
+    ZoneMember.query.delete()
     try:
         db.session.commit()
     except Exception as exc:
@@ -389,7 +449,6 @@ def layout_clear():
 @login_required
 def create_overlay_models():
     config_path = OVERLAY_CONFIG_PATH
-    managed_names = OVERLAY_MODELS
 
     try:
         if os.path.exists(config_path):
@@ -406,19 +465,38 @@ def create_overlay_models():
     prior = {
         m.get("Name"): m
         for m in existing.get("models", [])
-        if isinstance(m, dict) and m.get("Name") in managed_names
+        if isinstance(m, dict) and is_managed_overlay(m.get("Name"))
     }
     layouts = {l.slot: l for l in ZoneLayout.query.all()}
+    members = {}
+    for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all():
+        members.setdefault(m.slot, []).append(m)
 
     # Keep any model we don't manage untouched.
     kept = [
         m for m in existing.get("models", [])
-        if not (isinstance(m, dict) and m.get("Name") in managed_names)
+        if not (isinstance(m, dict) and is_managed_overlay(m.get("Name")))
     ]
 
     rebuilt = []
-    for slot in range(0, 16):
+    virtual_all = all_is_virtual()
+    for slot in range(0, MAX_ZONES + 1):
         name = "All" if slot == 0 else f"Zone {slot}"
+        if slot == 0 and virtual_all:
+            # No correct whole-display model exists for this show; the app
+            # drives "All" through the zones, so none is written.
+            continue
+        if slot in members:
+            # A grouped zone is driven through its member models; "Zone N"
+            # itself is not written, and is never targeted.
+            for member in members[slot]:
+                grid = member.to_grid()
+                err = overlay_layout.validate_grid(grid, member.fpp_model_name)
+                if err:
+                    current_app.logger.error("Skipping %s: %s", member.fpp_model_name, err)
+                else:
+                    rebuilt.append(overlay_layout.to_fpp_model(member.fpp_model_name, grid))
+            continue
         layout = layouts.get(slot)
         if layout is not None:
             grid = layout.to_grid()
@@ -569,6 +647,10 @@ def build_ui_payload():
             l.to_dict(include_data=True)
             for l in ZoneLayout.query.order_by(ZoneLayout.slot).all()
         ],
+        "zone_members": [
+            m.to_dict(include_data=True)
+            for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all()
+        ],
         "saved_colors": [
             {"id": c.id, "name": c.name, "hex_value": c.hex_value}
             for c in SavedColor.query.all()
@@ -622,7 +704,7 @@ def apply_ui_backup(data):
     existing_zones = {z.slot: z for z in Zone.query.all()}
     for item in (data.get("zones") or []):
         slot = item.get("slot")
-        if not isinstance(slot, int) or slot < 0 or slot > 15:
+        if not isinstance(slot, int) or slot < 0 or slot > MAX_ZONES:
             continue
         name = str(item.get("display_name") or "").strip()
         hidden = bool(item.get("hidden", False))
@@ -642,7 +724,7 @@ def apply_ui_backup(data):
                 continue
             slot = item.get("slot")
             grid_data = item.get("data")
-            if not isinstance(slot, int) or slot < 0 or slot > 15 or not grid_data:
+            if not isinstance(slot, int) or slot < 0 or slot > MAX_ZONES or not grid_data:
                 continue
             try:
                 layout = ZoneLayout(
@@ -665,6 +747,40 @@ def apply_ui_backup(data):
                 current_app.logger.warning("Restore: %s", err)
                 continue
             db.session.add(layout)
+
+    # Grouped-zone members — replace entirely when the backup carries them
+    if isinstance(data.get("zone_members"), list):
+        ZoneMember.query.delete()
+        db.session.flush()
+        for item in data["zone_members"]:
+            if not isinstance(item, dict):
+                continue
+            slot = item.get("slot")
+            grid_data = item.get("data")
+            if not isinstance(slot, int) or slot < 1 or slot > MAX_ZONES or not grid_data:
+                continue
+            try:
+                member = ZoneMember(
+                    slot=slot,
+                    position=int(item["position"]),
+                    source_name=str(item.get("source_name") or "")[:64] or None,
+                    width=int(item["width"]),
+                    height=int(item["height"]),
+                    node_count=int(item["node_count"]),
+                    start_channel=int(item["start_channel"]),
+                    channel_count=int(item["channel_count"]),
+                    channels_per_node=int(item.get("channels_per_node") or 3),
+                    data=str(grid_data),
+                    imported_at=str(item.get("imported_at") or "")[:32] or None,
+                )
+            except (KeyError, TypeError, ValueError):
+                current_app.logger.warning("Restore: skipping malformed member for slot %r", slot)
+                continue
+            err = overlay_layout.validate_grid(member.to_grid(), member.fpp_model_name)
+            if err:
+                current_app.logger.warning("Restore: %s", err)
+                continue
+            db.session.add(member)
 
     # Saved colors + buttons — replace entirely
     ColorButton.query.delete()
