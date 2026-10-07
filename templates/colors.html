@@ -325,12 +325,10 @@
             </div>
             <div class="zone-pills" id="zone-pills">
                 {% for zone in zones %}
-                {% if not zone.hidden %}
-                <button class="zone-pill{% if loop.first %} active{% endif %}"
+                <button class="zone-pill"
                         data-model="{{ zone.fpp_model_name }}">
                     {{ zone.display_name }}
                 </button>
-                {% endif %}
                 {% endfor %}
             </div>
             <div class="zone-selection-count" id="zone-count"></div>
@@ -372,10 +370,31 @@
     const zonePills    = document.getElementById('zone-pills');
     const zoneCount    = document.getElementById('zone-count');
 
-    // Multi-zone selection — Set of active model names
+    // Multi-zone selection — Set of active model names.
+    // The "All" model overlaps every numbered zone and the server switches the
+    // other side off on each send, so it is only ever selected on its own.
+    const ALL_MODEL = 'All';
     const activeModels = new Set();
-    const firstPill = zonePills.querySelector('.zone-pill');
-    if (firstPill) activeModels.add(firstPill.dataset.model);
+    const allPill   = () => zonePills.querySelector(`.zone-pill[data-model="${ALL_MODEL}"]`);
+    const zoneOnly  = () => [...zonePills.querySelectorAll('.zone-pill')]
+                              .filter(p => p.dataset.model !== ALL_MODEL);
+
+    function selectPill(pill) {
+        const isAll = pill.dataset.model === ALL_MODEL;
+        zonePills.querySelectorAll('.zone-pill').forEach(p => {
+            if (isAll ? p !== pill : p.dataset.model === ALL_MODEL) {
+                p.classList.remove('active');
+                activeModels.delete(p.dataset.model);
+            }
+        });
+        pill.classList.add('active');
+        activeModels.add(pill.dataset.model);
+    }
+
+    // Default to the first numbered zone, so a site that uses zones is not
+    // opened with the whole display selected.
+    const firstPill = zoneOnly()[0] || allPill();
+    if (firstPill) selectPill(firstPill);
 
     // Per-zone color memory: model name → hex string
     const zoneColors = {};
@@ -394,6 +413,13 @@
     // enable would paint zones the user never touched.
     const touchedModels = new Set();
 
+    // Same exclusivity as the selection: whichever side was set last wins.
+    function markTouched(model) {
+        if (model === ALL_MODEL) touchedModels.clear();
+        else touchedModels.delete(ALL_MODEL);
+        touchedModels.add(model);
+    }
+
     function syncOutputButton() {
         btnOutput.textContent = outputEnabled
             ? '\u25A0 Disable Output To Lights'
@@ -404,10 +430,11 @@
 
     function updateZoneCount() {
         const n = activeModels.size;
-        const total = zonePills.querySelectorAll('.zone-pill').length;
-        zoneCount.textContent = n === total ? 'All zones selected'
-                              : n === 1     ? '1 zone selected'
-                                            : `${n} zones selected`;
+        const total = zoneOnly().length;
+        zoneCount.textContent = activeModels.has(ALL_MODEL) ? 'Whole display selected'
+                              : n === total && n > 1       ? 'All zones selected'
+                              : n === 1                    ? '1 zone selected'
+                                                           : `${n} zones selected`;
     }
     updateZoneCount();
 
@@ -421,8 +448,7 @@
             activeModels.delete(model);
             pill.classList.remove('active');
         } else {
-            activeModels.add(model);
-            pill.classList.add('active');
+            selectPill(pill);
             // Load this zone's stored color into the picker
             const restored = zoneColors[model] || '#ff0000';
             colorInput.value = restored;
@@ -432,10 +458,12 @@
     });
 
     document.getElementById('btn-zones-all').addEventListener('click', () => {
-        zonePills.querySelectorAll('.zone-pill').forEach(p => {
-            p.classList.add('active');
-            activeModels.add(p.dataset.model);
-        });
+        const zones = zoneOnly();
+        if (!zones.length) {
+            if (allPill()) selectPill(allPill());
+        } else {
+            zones.forEach(selectPill);
+        }
         updateZoneCount();
     });
 
@@ -443,10 +471,10 @@
         const pills = [...zonePills.querySelectorAll('.zone-pill')];
         activeModels.clear();
         pills.forEach(p => p.classList.remove('active'));
-        if (pills[0]) {
-            pills[0].classList.add('active');
-            activeModels.add(pills[0].dataset.model);
-            const restored = zoneColors[pills[0].dataset.model] || '#ff0000';
+        const first = zoneOnly()[0] || allPill();
+        if (first) {
+            selectPill(first);
+            const restored = zoneColors[first.dataset.model] || '#ff0000';
             colorInput.value = restored;
             hexDisplay.textContent = restored.toUpperCase();
         }
@@ -497,9 +525,9 @@
         }, 120);
     }
 
-    // Push everything built while the gate was shut.  Zone pills never include
-    // the "All" model (colors_page filters slot 0 out), so these sends cannot
-    // deactivate one another and are safe to run in parallel.
+    // Push everything built while the gate was shut.  markTouched never lets
+    // "All" and a numbered zone sit in touchedModels together, so these sends
+    // cannot deactivate one another and are safe to run in parallel.
     async function pushTouchedZones() {
         const models = [...touchedModels];
         if (!models.length) return;
@@ -512,7 +540,7 @@
     function onColorChange() {
         const hex = colorInput.value;
         hexDisplay.textContent = hex.toUpperCase();
-        activeModels.forEach(model => { zoneColors[model] = hex; touchedModels.add(model); });
+        activeModels.forEach(model => { zoneColors[model] = hex; markTouched(model); });
         sendColor(hex);
     }
     colorInput.addEventListener('input', onColorChange);
@@ -624,7 +652,7 @@
             const hex = applyBtn.dataset.hex;
             colorInput.value = hex;
             hexDisplay.textContent = hex.toUpperCase();
-            activeModels.forEach(model => { zoneColors[model] = hex; touchedModels.add(model); });
+            activeModels.forEach(model => { zoneColors[model] = hex; markTouched(model); });
             sendColor(hex);
             return;
         }
@@ -686,10 +714,13 @@
         const name = await showInputModal('Enter a name for this scene:', 'Scene name…');
         if (!name) return;
 
-        // Collect current colors for all visible zone pills
+        // Collect current colors for all visible zone pills.  A scene holds
+        // either the whole display or the numbered zones, never both — they
+        // overlap, and applying both would leave whichever landed last on top.
         const zones = {};
         activeModels.forEach(model => { zoneColors[model] = colorInput.value; });
-        zonePills.querySelectorAll('.zone-pill').forEach(p => {
+        const scenePills = activeModels.has(ALL_MODEL) ? [allPill()] : zoneOnly();
+        scenePills.forEach(p => {
             zones[p.dataset.model] = zoneColors[p.dataset.model];
         });
 
@@ -725,7 +756,7 @@
                 // Restore zone picker colors to match the applied scene
                 result.zones.forEach(z => {
                     zoneColors[z.fpp_model] = z.hex_color;
-                    touchedModels.add(z.fpp_model);
+                    markTouched(z.fpp_model);
                 });
                 const activePill = zonePills.querySelector('.zone-pill.active');
                 if (activePill) {

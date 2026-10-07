@@ -47,7 +47,7 @@ def settings_page():
     for key in ("logo_url", "bg_image_url"):
         if settings.get(key):
             settings[key] = ui_path_mod.reanchor_upload_url(settings[key])
-    zones = [z.to_dict() for z in get_all_zones() if z.slot != 0]
+    zones = [z.to_dict() for z in get_all_zones()]
     layouts = {l.slot: l.to_dict() for l in ZoneLayout.query.all()}
     grouped = {}
     for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all():
@@ -159,7 +159,7 @@ def delete_image(image_type):
 @settings_bp.get("/api/zones")
 @login_required
 def get_zones():
-    return jsonify([z.to_dict() for z in get_all_zones() if z.slot != 0])
+    return jsonify([z.to_dict() for z in get_all_zones()])
 
 
 @settings_bp.post("/api/zones")
@@ -211,6 +211,65 @@ def _current_overlay_models():
         }
     except Exception:
         return {}
+
+
+def selectable_zones(include_hidden=False):
+    """Zones an operator can pick on the Colors and Effects pages.
+
+    Slot 0 ("All") is only offered once the controller can actually drive it:
+    either it has a real "All" model, or "All" is virtual and fans out over the
+    zones (see all_is_virtual).  Otherwise every send to it would 404 until
+    Create Overlay Models has been run.  It is listed first so a single-zone
+    site sees it up top.
+    """
+    has_all = "All" in _current_overlay_models() or all_is_virtual()
+    return [
+        z.to_dict() for z in get_all_zones()
+        if (include_hidden or not z.hidden) and (z.slot != 0 or has_all)
+    ]
+
+
+def _whole_display_model(kept):
+    """An "All" model spanning every channel, for when no layout was imported.
+
+    Prefers the xLights display map, which gives the model the sign's real
+    shape; falls back to a plain run from the lowest to the highest channel of
+    the other overlay models so a fill still reaches every pixel.
+    """
+    if os.path.exists(DISPLAY_MAP_PATH):
+        try:
+            with open(DISPLAY_MAP_PATH) as f:
+                models = overlay_layout.parse_display_map(f.read())
+            grid = overlay_layout.derive_composite_grid(models)
+            if grid and not overlay_layout.validate_grid(grid, "All"):
+                return overlay_layout.to_fpp_model("All", grid)
+        except Exception as exc:
+            current_app.logger.warning("Could not derive All from display map: %s", exc)
+
+    spans = []
+    for m in kept:
+        try:
+            start, count = int(m.get("StartChannel")), int(m.get("ChannelCount"))
+        except (TypeError, ValueError):
+            continue
+        if start >= 1 and count >= 1:
+            spans.append((start, start + count - 1))
+    if not spans:
+        return None
+    first = min(a for a, _ in spans)
+    last = max(b for _, b in spans)
+    return {
+        "Name": "All",
+        "Type": "Channel",
+        "StartChannel": first,
+        "ChannelCount": last - first + 1,
+        "ChannelCountPerNode": 3,
+        "StringCount": 1,
+        "StrandsPerString": 1,
+        "Orientation": "horizontal",
+        "StartCorner": "TL",
+        "xLights": False,
+    }
 
 
 def _derive_from_map():
@@ -510,7 +569,11 @@ def create_overlay_models():
             # No layout — keep the operator's channel data exactly as it is
             # rather than resetting it to a stub.
             rebuilt.append(prior[name])
-        elif slot > 0:
+        elif slot == 0:
+            whole = _whole_display_model(kept)
+            if whole is not None:
+                rebuilt.append(whole)
+        else:
             rebuilt.append({
                 "Name": name,
                 "Type": "Channel",
