@@ -101,10 +101,11 @@ def backup_full():
 
     identity = {}
     if "ui" in sections:
-        # Carried so a restored controller keeps its own PIN, and so the
+        # Carried so a restored controller keeps its own PIN (the master PIN is
+        # per-install and deliberately not carried), and so the
         # internal token still matches the /internal/ URLs baked into the
         # playlists FPP hands back on restore.
-        for key in ("ADMIN_PASSWORD_HASH", "MASTER_PIN_HASH", "INTERNAL_TOKEN"):
+        for key in ("ADMIN_PASSWORD_HASH", "INTERNAL_TOKEN"):
             value = current_app.config.get(key) or ""
             if value:
                 identity[key] = value
@@ -311,10 +312,10 @@ def _apply_archive(path, reboot=False):
         except Exception as exc:
             log.append(("uploads", "error", f"Branding images failed: {exc}"))
 
-    # 5. Identity — PIN, recovery PIN and the internal token
+    # 5. Identity — admin PIN and the internal token (never the master PIN)
     identity = manifest.get("identity") or {}
     restored_keys = []
-    for key in ("ADMIN_PASSWORD_HASH", "MASTER_PIN_HASH", "INTERNAL_TOKEN"):
+    for key in ("ADMIN_PASSWORD_HASH", "INTERNAL_TOKEN"):
         value = identity.get(key)
         if not isinstance(value, str) or not value.strip():
             continue

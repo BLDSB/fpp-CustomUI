@@ -67,14 +67,12 @@ def _check_pin(candidate, stored_hash):
 
 
 def is_unprovisioned():
-    """True on a fresh install — no admin PIN and no master PIN set yet.
+    """True on a fresh install — no admin PIN chosen yet.
 
-    Both are checked: a box with only a master PIN is still reachable and must
-    not be re-claimable through the setup flow.
+    The master PIN is provisioned by the installer, so it is set from the start
+    and says nothing about whether the owner has claimed the controller.
     """
-    return not current_app.config.get("ADMIN_PASSWORD_HASH", "") and not current_app.config.get(
-        "MASTER_PIN_HASH", ""
-    )
+    return not current_app.config.get("ADMIN_PASSWORD_HASH", "")
 
 
 def _client_is_local():
@@ -244,7 +242,13 @@ def change_pin():
     new_pin    = str(data.get("new_pin", "")).strip()
 
     stored_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
-    if not _check_pin(str(current_pw), stored_hash):
+    master_hash = current_app.config.get("MASTER_PIN_HASH", "")
+    # A master session may confirm with the master PIN instead, so a forgotten
+    # admin PIN can be reset without knowing it. Both conditions are required:
+    # the session must be a master login AND the master PIN re-entered, so a
+    # regular session can never use the master PIN here.
+    master_override = bool(session.get("is_master")) and _check_pin(str(current_pw), master_hash)
+    if not (master_override or _check_pin(str(current_pw), stored_hash)):
         return jsonify({"error": "Current PIN is incorrect."}), 400
 
     failure = _persist_pin("ADMIN_PASSWORD_HASH", new_pin, label="New PIN")
@@ -258,6 +262,12 @@ def change_pin():
 @auth_bp.post("/api/set-master-pin")
 @login_required
 def set_master_pin():
+    # The settings page only shows this card to master sessions, but the UI is
+    # not a control — enforce it here so a regular admin session can't plant or
+    # replace the master PIN by calling the API directly.
+    if not session.get("is_master"):
+        return jsonify({"error": "Master PIN required."}), 403
+
     data = request.get_json(silent=True) or {}
     new_pin = str(data.get("new_pin", "")).strip()
 
