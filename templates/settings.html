@@ -195,6 +195,18 @@
         font-size: 0.75rem; color: var(--text-dim);
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
+    .layout-slot-field {
+        margin-left: auto; flex: 0 0 auto;
+        display: flex; align-items: center; gap: 0.35rem;
+        font-size: 0.75rem; color: var(--text-dim);
+    }
+    .layout-slot-input {
+        width: 3.4rem;
+        font-size: 0.9rem; text-align: center;
+        background: transparent; color: var(--text);
+        border: 1px solid var(--border-dim); border-radius: 4px;
+        padding: 0.3rem 0.2rem;
+    }
     .zone-layout-badge {
         font-size: 0.7rem; color: var(--text-dim);
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -565,6 +577,10 @@
                     style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
                 Import Layout
             </button>
+            <button id="btn-clear-layout" type="button" class="btn-save"
+                    style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
+                Clear Layout
+            </button>
             <button id="btn-create-overlay-models" type="button" class="btn-save"
                     style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim)">
                 Create Overlay Models
@@ -740,10 +756,21 @@
     <div class="modal-box wide">
         <h3>Import Layout</h3>
         <p id="layout-intro">
-            Reading the xLights display map on this controller. Each model is matched to
-            a zone in start-channel order — check the shapes below before importing.
+            Reading the xLights display map on this controller. With more than 15 models,
+            models are grouped into zones — by name where they share one, otherwise by
+            channel order — so a single zone can drive several models. Check the shapes and
+            change any zone below before importing.
+        </p>
+        <p id="layout-mixed-note" class="detail" style="display:none;font-size:0.78rem;color:#e0a83a">
+            This show mixes 3-channel (RGB) and 4-channel (RGBW) models, so a single whole-display
+            "All" model can't address them correctly. "All" will drive every zone instead.
         </p>
         <div class="layout-list" id="layout-list"></div>
+        <p id="layout-summary" class="detail" style="font-size:0.75rem;margin:0.5rem 0 0"></p>
+        <button type="button" id="btn-reset-suggested" class="btn-save"
+                style="background:transparent;border:1px solid var(--border-dim);color:var(--text-dim);font-size:0.75rem;padding:0.25rem 0.6rem;align-self:flex-start">
+            Reset to suggested grouping
+        </button>
         <label class="zone-toggle" style="font-size:0.8rem">
             <input type="checkbox" id="layout-set-names"> Also rename zones to the model names
         </label>
@@ -927,6 +954,7 @@
     const layoutModal = document.getElementById('modal-layout-import');
     const layoutList  = document.getElementById('layout-list');
     let   layoutCandidates = [];
+    let   layoutAll = [];
 
     function drawMask(canvas, mask) {
         // One canvas pixel per cell; CSS scales it up with pixelated rendering.
@@ -945,6 +973,49 @@
             }
         }
         ctx.putImageData(img, 0, 0);
+    }
+
+    // Models may share a zone, so any importable row can be moved to Zone 1–15.
+    // The whole-display composite is fixed to "All".
+    function slotControl(m) {
+        if (m.is_composite || m.slot === null || m.error) {
+            return `<span class="layout-slot">${m.fpp_model_name || '—'}</span>`;
+        }
+        return `<label class="layout-slot-field">Zone
+            <input type="number" class="layout-slot-input" min="1" max="15" step="1"
+                   inputmode="numeric" value="${m.slot}"
+                   aria-label="Zone for ${escHtml(m.source_name)}"></label>`;
+    }
+
+    function layoutImportPayload() {
+        const bySlot = {};
+        layoutCandidates.forEach(m => { (bySlot[m.slot] = bySlot[m.slot] || []).push(m); });
+        return layoutCandidates.map(m => {
+            const group = bySlot[m.slot];
+            // A zone holding one model is just that model. A shared zone keeps the
+            // suggested group name only if all its models came from that group;
+            // after hand edits, name it by its first and last model instead.
+            let label = '';
+            if (group.length > 1) {
+                const sameGroup = group.every(g => g.group_label && g.group_label === group[0].group_label);
+                label = sameGroup
+                    ? group[0].group_label
+                    : `${group[0].source_name} - ${group[group.length - 1].source_name}`;
+            }
+            return { slot: m.slot, source_name: m.source_name, group_label: label };
+        });
+    }
+
+    // One line per zone that has models, so a stray number is visible before importing.
+    function updateLayoutSummary() {
+        const el = document.getElementById('layout-summary');
+        if (!el) return;
+        const counts = {};
+        layoutCandidates.forEach(m => {
+            if (!m.is_composite) counts[m.slot] = (counts[m.slot] || 0) + 1;
+        });
+        el.textContent = Object.keys(counts).map(Number).sort((a, b) => a - b)
+            .map(z => `Zone ${z}: ${counts[z]}`).join('   ·   ');
     }
 
     function renderLayoutCandidates(models) {
@@ -971,11 +1042,28 @@
                         channel ${m.start_channel}, ${m.channel_count} ch</span>
                     ${notes.length ? `<span class="warn">${notes.join(' · ')}</span>` : ''}
                 </div>
-                <span class="layout-slot">${m.fpp_model_name || '—'}</span>
+                ${slotControl(m)}
             `;
+            const slotInput = row.querySelector('input.layout-slot-input');
+            if (slotInput) {
+                const valid = v => Number.isInteger(v) && v >= 1 && v <= 15;
+                // Take a value as soon as it is a valid zone; an empty or out-of-range
+                // entry keeps the previous zone and snaps back when the field is left.
+                slotInput.addEventListener('input', () => {
+                    const v = parseInt(slotInput.value, 10);
+                    if (valid(v)) m.slot = v;
+                    updateLayoutSummary();
+                });
+                // A focused number box would otherwise change value as the list is
+                // scrolled with the wheel; drop focus so the wheel just scrolls.
+                slotInput.addEventListener('wheel', () => slotInput.blur(), { passive: true });
+                slotInput.addEventListener('change', () => { slotInput.value = m.slot; });
+                slotInput.addEventListener('focus', () => slotInput.select());
+            }
             drawMask(row.querySelector('canvas'), m.mask);
             layoutList.appendChild(row);
         });
+        updateLayoutSummary();
     }
 
     document.getElementById('btn-import-layout').addEventListener('click', async () => {
@@ -986,14 +1074,47 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed');
             // Only importable rows: a model with no zone slot has nowhere to go.
+            // Start from the grouping already saved, falling back to the suggestion
+            // for models that have not been imported yet.
+            (data.models || []).forEach(m => {
+                m.suggested_slot = m.slot;
+                if (m.saved_slot !== null && m.saved_slot !== undefined && !m.is_composite) {
+                    m.slot = m.saved_slot;
+                }
+            });
             layoutCandidates = (data.models || []).filter(m => m.slot !== null && !m.error);
-            renderLayoutCandidates(data.models || []);
+            layoutAll = data.models || [];
+            document.getElementById('layout-mixed-note').style.display =
+                data.mixed_channels ? 'block' : 'none';
+            renderLayoutCandidates(layoutAll);
             if (!layoutCandidates.length) {
                 layoutList.innerHTML += '<p class="detail">Nothing here can be imported.</p>';
             }
         } catch (err) {
             layoutList.innerHTML = '';
             layoutModal.classList.remove('open');
+            showToast('Error: ' + err.message, 'error');
+        }
+    });
+
+    document.getElementById('btn-reset-suggested').addEventListener('click', () => {
+        layoutCandidates.forEach(m => {
+            if (!m.is_composite && m.suggested_slot !== null) m.slot = m.suggested_slot;
+        });
+        renderLayoutCandidates(layoutAll);
+    });
+
+    document.getElementById('btn-clear-layout').addEventListener('click', async () => {
+        if (!confirm('Clear the imported layout and all zone groups? Zones go back to a plain '
+                   + 'rectangle until you import again. Run Create Overlay Models afterwards.')) return;
+        try {
+            const res  = await fetch((window.APP_ROOT || '') + '/api/fpp/layout/clear', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            layoutsData = {};
+            renderZones(zonesData);
+            showToast('Layout cleared — run Create Overlay Models to update the controller.', 'success');
+        } catch (err) {
             showToast('Error: ' + err.message, 'error');
         }
     });
@@ -1019,17 +1140,27 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     set_names: document.getElementById('layout-set-names').checked,
-                    models: layoutCandidates.map(m => ({ slot: m.slot, source_name: m.source_name })),
+                    replace: true,
+                    models: layoutImportPayload(),
                 }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed');
             const renamed = document.getElementById('layout-set-names').checked;
-            layoutCandidates.forEach(m => {
-                layoutsData[m.slot] = { width: m.width, height: m.height, source_name: m.source_name };
+            const payload = layoutImportPayload();
+            layoutCandidates.forEach((m, i) => {
+                const mates = layoutCandidates.filter(o => o.slot === m.slot);
+                if (mates.length > 1) {
+                    layoutsData[m.slot] = {
+                        members: mates.length,
+                        source_name: mates.map(o => o.source_name).join(', '),
+                    };
+                } else {
+                    layoutsData[m.slot] = { width: m.width, height: m.height, source_name: m.source_name };
+                }
                 if (renamed && m.slot > 0) {
                     const z = zonesData.find(z => z.slot === m.slot);
-                    if (z) z.display_name = m.source_name;
+                    if (z) z.display_name = payload[i].group_label || m.source_name;
                 }
             });
             renderZones(zonesData);
@@ -1331,6 +1462,10 @@
     function layoutBadge(slot) {
         const l = layoutsData[slot];
         if (!l) return '';
+        if (l.members) {
+            return `<span class="zone-layout-badge" title="${escHtml(l.source_name || '')}">`
+                 + `${l.members} models</span>`;
+        }
         return `<span class="zone-layout-badge" title="Imported from ${escHtml(l.source_name || 'xLights')}">`
              + `${l.width}×${l.height}</span>`;
     }

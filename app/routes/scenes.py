@@ -7,7 +7,9 @@ from flask import Blueprint, current_app, jsonify, request
 from app import db
 from app.auth_utils import login_required
 from app.fpp_playlist import build_playlist_def, scene_entries
-from app.models import OVERLAY_MODELS, Scene, SceneZone
+from app.models import (
+    OVERLAY_MODELS, Scene, SceneZone, all_overlay_models, expand_overlay_models,
+)
 
 scenes_bp = Blueprint("scenes", __name__)
 
@@ -76,7 +78,7 @@ def _reset_overlays():
     except requests.RequestException:
         pass
 
-    for model in OVERLAY_MODELS:
+    for model in sorted(all_overlay_models()):
         try:
             requests.put(_fpp(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
         except requests.RequestException:
@@ -99,16 +101,17 @@ def _set_scene_colors(scene):
             errors.append(zone.fpp_model)
             continue
         try:
-            requests.put(
-                _fpp(f"/overlays/model/{zone.fpp_model}/state"),
-                json={"State": 1},
-                timeout=5,
-            ).raise_for_status()
-            requests.put(
-                _fpp(f"/overlays/model/{zone.fpp_model}/fill"),
-                json={"RGB": [r, g, b]},
-                timeout=5,
-            ).raise_for_status()
+            for target in expand_overlay_models([zone.fpp_model]):
+                requests.put(
+                    _fpp(f"/overlays/model/{target}/state"),
+                    json={"State": 1},
+                    timeout=5,
+                ).raise_for_status()
+                requests.put(
+                    _fpp(f"/overlays/model/{target}/fill"),
+                    json={"RGB": [r, g, b]},
+                    timeout=5,
+                ).raise_for_status()
         except requests.RequestException as exc:
             current_app.logger.error("Scene %d apply error for %s: %s", scene.id, zone.fpp_model, exc)
             errors.append(zone.fpp_model)

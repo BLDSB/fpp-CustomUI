@@ -5,7 +5,10 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import db
 from app.auth_utils import login_required
-from app.models import OVERLAY_MODELS, ColorButton, SavedColor, get_all_zones
+from app.models import (
+    OVERLAY_MODELS, ColorButton, SavedColor, all_overlay_models,
+    expand_overlay_models, get_all_zones,
+)
 
 colors_bp = Blueprint("colors", __name__)
 
@@ -49,8 +52,10 @@ def send_color():
 
     # Deactivate conflicting models before activating the target.
     # "All" overlaps every zone, so only one group can be active at a time.
+    # A grouped zone is really several member overlay models.
+    targets = expand_overlay_models([model])
     if model == "All":
-        conflicts = [f"Zone {i}" for i in range(1, 16)]
+        conflicts = sorted(all_overlay_models() - {"All"})
     else:
         conflicts = ["All"]
 
@@ -65,17 +70,18 @@ def send_color():
             pass
 
     try:
-        requests.put(
-            _fpp(f"/overlays/model/{model}/state"),
-            json={"State": 1},
-            timeout=5,
-        ).raise_for_status()
+        for target in targets:
+            requests.put(
+                _fpp(f"/overlays/model/{target}/state"),
+                json={"State": 1},
+                timeout=5,
+            ).raise_for_status()
 
-        requests.put(
-            _fpp(f"/overlays/model/{model}/fill"),
-            json={"RGB": [r, g, b]},
-            timeout=5,
-        ).raise_for_status()
+            requests.put(
+                _fpp(f"/overlays/model/{target}/fill"),
+                json={"RGB": [r, g, b]},
+                timeout=5,
+            ).raise_for_status()
     except requests.RequestException as exc:
         current_app.logger.error("FPP send color error: %s", exc)
         return jsonify({"error": "Could not send color to the controller"}), 502
@@ -94,7 +100,7 @@ def stop_color():
 def _deactivate_all_overlays():
     """Deactivate every known overlay model (fire-and-forget per model)."""
     errors = []
-    for model in OVERLAY_MODELS:
+    for model in sorted(all_overlay_models()):
         try:
             resp = requests.put(
                 _fpp(f"/overlays/model/{model}/state"),
