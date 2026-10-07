@@ -30,7 +30,8 @@ RESERVED_PATHS = {
     "plugins", "sequence", "playlist", "playlists", "effects", "models",
     "outputs", "overlays", "channel", "events", "ws", "remote", "proxy",
     "system", "status", "settings", "cache", "deps", "themes", "i18n",
-    "icons", "favicon.ico", "robots.txt",
+    "icons", "favicon.ico", "robots.txt", "common", "jquery", "localonly",
+    "webfonts", "help", "git", "server-status",
 }
 
 

@@ -24,11 +24,13 @@ TEMPLATE="$PLUGIN_DIR/deploy/99-fpp-ui.conf"
 ENV_FILE="$PLUGIN_DIR/.env"
 
 # Top-level paths owned by FPP itself or by Apache. Mounting the UI over one of
-# these would break the stock FPP interface, so they are refused.
+# these would break the stock FPP interface, so they are refused — in any
+# capitalisation, because the proxy config matches the path case-insensitively.
 RESERVED="api cgi-bin fpp css js images fonts doc docs php uploads media config
           backups logs tmp plugin plugins sequence playlist playlists effects
           models outputs overlays channel events ws remote proxy system status
-          settings cache deps themes i18n icons favicon.ico robots.txt"
+          settings cache deps themes i18n icons favicon.ico robots.txt common
+          jquery localonly webfonts help git server-status"
 
 die() { echo "✗ $*" >&2; exit 1; }
 
