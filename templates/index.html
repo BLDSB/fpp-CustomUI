@@ -22,6 +22,41 @@
     #status-text { color: var(--text-dim); }
     #status-text .label   { color: var(--text); font-weight: 600; }
     #status-text .playing { color: var(--accent); font-weight: 600; }
+    .status-main { display: flex; align-items: center; flex-wrap: wrap; gap: 0.7rem; }
+
+    /* Audio indicator: a speaker plus three bars. The bars are a CSS-only
+       decoration (transform animation on the compositor) driven by the status
+       poll that already runs, so it costs the Pi nothing extra. */
+    #audio-indicator {
+        display: none;
+        align-items: center;
+        gap: 0.35rem;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+    #audio-indicator.on { display: inline-flex; }
+    #audio-indicator svg { width: 1.1rem; height: 1.1rem; fill: currentColor; }
+    #audio-indicator .bars { display: inline-flex; align-items: center; gap: 2px; height: 0.95rem; }
+    #audio-indicator .bars i {
+        display: block;
+        width: 3px;
+        height: 100%;
+        background: currentColor;
+        border-radius: 2px;
+        transform-origin: center;
+        transform: scaleY(0.3);
+        animation: audio-bar 0.9s ease-in-out infinite;
+    }
+    #audio-indicator .bars i:nth-child(2) { animation-delay: -0.3s; animation-duration: 0.7s; }
+    #audio-indicator .bars i:nth-child(3) { animation-delay: -0.6s; animation-duration: 1.1s; }
+    @keyframes audio-bar {
+        0%, 100% { transform: scaleY(0.3); }
+        50%      { transform: scaleY(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        #audio-indicator .bars i { animation: none; transform: scaleY(0.7); }
+    }
 
     /* ── Section header ── */
     .section-header {
@@ -110,6 +145,13 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+    .pl-audio {
+        display: inline-flex;
+        vertical-align: -0.2em;
+        margin-right: 0.4rem;
+        color: var(--accent);
+    }
+    .pl-audio svg { width: 1.05em; height: 1.05em; fill: currentColor; }
     .btn-play {
         flex-shrink: 0;
         background: var(--accent);
@@ -299,7 +341,14 @@
 
 <!-- Status banner -->
 <div id="status-banner">
-    <span id="status-text"><span class="label">Status:</span> loading…</span>
+    <span class="status-main">
+        <span id="status-text"><span class="label">Status:</span> loading…</span>
+        <span id="audio-indicator" role="img" aria-label="Audio is playing">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12z"/></svg>
+            <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span id="audio-name"></span>
+        </span>
+    </span>
     <button id="btn-stop" disabled>&#9632; Stop</button>
 </div>
 
@@ -332,6 +381,8 @@
 
     const grid = document.getElementById('playlist-grid');
     const statusText = document.getElementById('status-text');
+    const audioIndicator = document.getElementById('audio-indicator');
+    const audioName = document.getElementById('audio-name');
     const btnStop = document.getElementById('btn-stop');
     const btnLoop = document.getElementById('btn-loop');
     const schedEls = {
@@ -349,6 +400,7 @@
     let activeOverlayKind = '';    // "Scene" or "Effect"
     let hasSequences = false;
     let builtNames = new Set();   // playlists built on the Playlists page
+    let audioNames = new Set();   // playlists that play an audio file
 
     // ── Loop state (persisted in localStorage) ─────────────────────
     let loopEnabled = localStorage.getItem('fpp-loop') !== 'false'; // default ON
@@ -389,10 +441,15 @@
     // Scene and effect playlists are generated one per saved item, so they are
     // grouped separately to keep the built playlists at the top of the page.
     // The prefixes match what /api/playlists/<name>/play keys on.
+    const SPEAKER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12z"/></svg>';
+
     function cardHtml(name, label) {
+        const audio = audioNames.has(name)
+            ? `<span class="pl-audio" title="Includes audio" role="img" aria-label="Includes audio">${SPEAKER_ICON}</span>`
+            : '';
         return `
             <div class="playlist-card${name === currentPlaylist ? ' active-playlist' : ''}" data-name="${escHtml(name)}">
-                <span class="playlist-name" title="${escHtml(name)}">${escHtml(label)}</span>
+                <span class="playlist-name" title="${escHtml(name)}">${audio}${escHtml(label)}</span>
                 <button class="btn-play" data-name="${escHtml(name)}" aria-label="Play ${escHtml(name)}">&#9654; Play</button>
             </div>`;
     }
@@ -464,12 +521,42 @@
     }
 
     // ── Load playlists ─────────────────────────────────────────
-    async function loadPlaylists() {
+    // Which playlists play audio. Looked up once per browser session and kept
+    // in sessionStorage, so revisiting the page costs the Pi nothing; the
+    // Refresh button asks again.
+    // The saved result remembers which playlists it covered, so a playlist
+    // added since (in FPP or here) is looked up straight away instead of
+    // being treated as having no audio.
+    async function loadAudioNames(allNames, force) {
+        const KEY = 'plAudioScan';
+        if (!force) {
+            try {
+                const cached = JSON.parse(sessionStorage.getItem(KEY));
+                if (cached && Array.isArray(cached.audio) && Array.isArray(cached.scanned)) {
+                    const scanned = new Set(cached.scanned);
+                    if (allNames.every(n => scanned.has(n))) return new Set(cached.audio);
+                }
+            } catch { /* unreadable cache — look it up again */ }
+        }
+        try {
+            const res = await apiFetch('/api/playlists/audio');
+            const audio = res.audio || [];
+            try {
+                sessionStorage.setItem(KEY, JSON.stringify({ audio, scanned: allNames }));
+            } catch { /* storage blocked */ }
+            return new Set(audio);
+        } catch {
+            return new Set();   // icons are a nicety — never block the playlist list on them
+        }
+    }
+
+    async function loadPlaylists(forceAudio) {
         try {
             const [data, built] = await Promise.all([
                 apiFetch('/api/playlists'),
                 apiFetch('/api/custom-playlists').catch(() => []),
             ]);
+            audioNames = await loadAudioNames(data.playlists || [], forceAudio === true);
             builtNames = new Set((built || []).map(p => p.name));
             renderPlaylists((data.playlists || []).filter(p => p !== 'Turn Off Lights' && (!hasSequences ? p !== 'Current-Sequence' : true)));
         } catch (err) {
@@ -561,6 +648,12 @@
                 btnStop.disabled = true;
             }
 
+            // FPP reports the media file of the entry that is playing right now.
+            const song = displayName ? (s.current_song || '').trim() : '';
+            audioIndicator.classList.toggle('on', !!song);
+            audioIndicator.title = song ? `Audio: ${song}` : '';
+            audioName.textContent = song.replace(/\.[^.]+$/, '');
+
             // Highlight active playlist card.
             document.querySelectorAll('.playlist-card[data-name]').forEach(card => {
                 const isActive = (displayName && !isTempSeq && card.dataset.name === currentPlaylist)
@@ -572,6 +665,7 @@
             });
         } catch {
             statusText.innerHTML = '<span class="label">Status:</span> <span style="color:#a0a0b0">Controller unreachable</span>';
+            audioIndicator.classList.remove('on');
             schedulerUnavailable();
         }
     }
@@ -629,7 +723,7 @@
     btnStop.addEventListener('click', stopPlayback);
 
     document.getElementById('btn-refresh').addEventListener('click', () => {
-        loadPlaylists();
+        loadPlaylists(true);
         loadSequences();
         pollStatus();
     });
