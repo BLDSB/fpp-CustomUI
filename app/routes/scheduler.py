@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -9,6 +10,21 @@ scheduler_bp = Blueprint("scheduler", __name__)
 
 _TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 SOLAR_TIMES = {"Dawn", "SunRise", "SunSet", "Dusk"}
+
+# FPP always wants a date range on an entry; these bounds mean "no restriction".
+DEFAULT_START_DATE = "2000-01-01"
+DEFAULT_END_DATE = "2099-12-31"
+
+
+def _parse_date(value):
+    """Return a YYYY-MM-DD string, DEFAULT-able "" for blank, or None if invalid."""
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def _fpp_base():
@@ -99,6 +115,15 @@ def _validate(data):
     except (TypeError, ValueError):
         return None, "stopType must be 0 (Graceful), 1 (Hard Stop), or 2 (Immediate)"
 
+    start_date = _parse_date(data.get("startDate"))
+    end_date = _parse_date(data.get("endDate"))
+    if start_date is None or end_date is None:
+        return None, "startDate and endDate must be YYYY-MM-DD or empty"
+    start_date = start_date or DEFAULT_START_DATE
+    end_date = end_date or DEFAULT_END_DATE
+    if start_date > end_date:
+        return None, "startDate must not be after endDate"
+
     entry = {
         "enabled":         enabled,
         "playlist":        playlist,
@@ -109,6 +134,8 @@ def _validate(data):
         "stopType":        stop_type,
         "startTimeOffset": start_offset,
         "endTimeOffset":   end_offset,
+        "startDate":       start_date,
+        "endDate":         end_date,
     }
     if command:
         entry["command"] = command

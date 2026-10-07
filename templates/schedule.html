@@ -125,7 +125,8 @@
     .form-group label { font-size: 0.78rem; color: var(--text-dim); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
     .form-group select,
     .form-group input[type="time"],
-    .form-group input[type="number"] {
+    .form-group input[type="number"],
+    .form-group input[type="date"] {
         background: rgba(10, 15, 40, 0.85);
         color: var(--text);
         border: 1px solid var(--border-dim);
@@ -136,7 +137,8 @@
     }
     .form-group select:focus,
     .form-group input[type="time"]:focus,
-    .form-group input[type="number"]:focus {
+    .form-group input[type="number"]:focus,
+    .form-group input[type="date"]:focus {
         outline: none;
         border-color: var(--accent);
     }
@@ -169,6 +171,8 @@
 
     /* Time row */
     .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+    .date-hint { font-size: 0.78rem; color: var(--text-dim); margin: -0.5rem 0 1rem; }
 
     /* Inline checkboxes */
     .inline-checks { display: flex; gap: 1.25rem; }
@@ -204,6 +208,7 @@
                 <th>Enabled</th>
                 <th>Action</th>
                 <th>Days</th>
+                <th>Dates</th>
                 <th>Start</th>
                 <th>End</th>
                 <th>Repeat</th>
@@ -242,6 +247,18 @@
                     <label class="day-label"><input type="checkbox" value="256">   Sat</label>
                 </div>
             </div>
+
+            <div class="time-row">
+                <div class="form-group">
+                    <label for="f-start-date">From Date</label>
+                    <input type="date" id="f-start-date">
+                </div>
+                <div class="form-group">
+                    <label for="f-end-date">To Date</label>
+                    <input type="date" id="f-end-date">
+                </div>
+            </div>
+            <p class="date-hint">Leave both dates empty to run every day.</p>
 
             <div class="time-row">
                 <div class="form-group">
@@ -358,6 +375,22 @@
         return names.length ? names.join(', ') : '—';
     }
 
+    // FPP stores "no restriction" as a wide default range; show that as blank/Always.
+    const DEFAULT_START_DATE = '2000-01-01';
+    const DEFAULT_END_DATE   = '2099-12-31';
+
+    function openStart(d) { return !d || d <= DEFAULT_START_DATE; }
+    function openEnd(d)   { return !d || d >= DEFAULT_END_DATE; }
+
+    function formatDateRange(e) {
+        const s = openStart(e.startDate) ? '' : e.startDate;
+        const t = openEnd(e.endDate)     ? '' : e.endDate;
+        if (!s && !t) return 'Always';
+        if (s && !t) return `From ${s}`;
+        if (!s && t) return `Until ${t}`;
+        return `${s} → ${t}`;
+    }
+
     function formatTime(t) {
         if (!t) return '—';
         if (SOLAR_TIMES.has(t)) return t;
@@ -468,6 +501,7 @@
                 </td>
                 <td>${escHtml(getEntryDisplayName(e))}</td>
                 <td>${formatDays(e.day)}</td>
+                <td>${formatDateRange(e)}</td>
                 <td>${formatTimeCell(e.startTime, e.startTimeOffset)}</td>
                 <td>${formatTimeCell(e.endTime, e.endTimeOffset)}</td>
                 <td>${e.repeat === '1' || e.repeat === 1 ? 'Yes' : 'No'}</td>
@@ -552,6 +586,10 @@
                 if (opt.value === key) { opt.selected = true; break; }
             }
             setDayMask(entry.day);
+            document.getElementById('f-start-date').value =
+                openStart(entry.startDate) ? '' : entry.startDate;
+            document.getElementById('f-end-date').value =
+                openEnd(entry.endDate) ? '' : entry.endDate;
             setTimeType('start', entry.startTime);
             const startMins = parseInt(entry.startTimeOffset, 10) || 0;
             if (startMins) document.getElementById('f-start-offset').value = startMins;
@@ -598,11 +636,19 @@
             showToast('Please set an end time.', 'error'); return;
         }
 
+        const startDate = document.getElementById('f-start-date').value;
+        const endDate   = document.getElementById('f-end-date').value;
+        if (startDate && endDate && startDate > endDate) {
+            showToast('From Date must not be after To Date.', 'error'); return;
+        }
+
         const startT  = getTimeValue('start');
         const endT    = getTimeValue('end');
         const selVal  = document.getElementById('f-playlist').value;
         const payload = {
             day:             mask,
+            startDate:       startDate,
+            endDate:         endDate,
             startTime:       startT.time,
             startTimeOffset: startT.offset,
             endTime:         endT.time,
@@ -651,6 +697,8 @@
             const key     = getEntryKey(entry);
             const toggled = {
                 day:             parseInt(entry.day, 10),
+                startDate:       entry.startDate || '',
+                endDate:         entry.endDate   || '',
                 startTime:       entry.startTime,
                 startTimeOffset: parseInt(entry.startTimeOffset, 10) || 0,
                 endTime:         entry.endTime   || '23:59:59',
