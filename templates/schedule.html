@@ -394,7 +394,9 @@
     function formatTime(t) {
         if (!t) return '—';
         if (SOLAR_TIMES.has(t)) return t;
-        return t.substring(0, 5); // Display only HH:MM for exact times
+        const [h, m] = t.split(':').map(n => parseInt(n, 10));
+        if (isNaN(h) || isNaN(m)) return t;
+        return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
     }
 
     function formatTimeCell(t, offset) {
