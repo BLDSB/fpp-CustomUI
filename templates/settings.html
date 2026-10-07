@@ -249,6 +249,35 @@
     }
     .settings-input:focus { outline: none; border-color: var(--accent); }
 
+    /* Network settings */
+    select.settings-input {
+        background: rgba(10, 15, 40, 0.9);
+        min-width: 180px;
+    }
+    .net-note { font-size: 0.82rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+    /* .hint is otherwise only styled inside .form-field, and the rows below
+       are built from .settings-row instead. */
+    .settings-card .hint { font-size: 0.74rem; color: var(--text-dim); line-height: 1.4; }
+    .net-status {
+        font-size: 0.8rem;
+        color: var(--text-dim);
+        line-height: 1.5;
+        border-left: 3px solid var(--accent);
+        padding: 0.5rem 0.75rem;
+        margin: 0 0 0.75rem;
+        background: rgba(0, 0, 0, 0.12);
+    }
+    .net-divider {
+        border: none;
+        border-top: 1px solid var(--border-dim);
+        margin: 0.5rem 0 0.9rem;
+    }
+    .btn-quiet {
+        background: transparent;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+    }
+
     /* Toggle switch */
     .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
     .toggle-switch input { opacity: 0; width: 0; height: 0; }
@@ -605,6 +634,175 @@
 
         <div>
             <button id="btn-save-genius-urls" class="btn-save">Save URLs</button>
+        </div>
+    </div>
+
+    <!-- Network -->
+    <div class="settings-card">
+        <h2>Network</h2>
+        <p class="net-note">
+            How this controller gets its address. A wrong value here can take it off
+            the network entirely — if that happens, join the hotspot below, or plug a
+            keyboard and screen into the controller and fix it from FPP's own menu.
+        </p>
+
+        <div id="net-loading" class="net-status">Reading the controller's network settings…</div>
+
+        <div id="net-body" style="display:none">
+            <div class="settings-row">
+                <label class="settings-label" for="net-iface">Interface</label>
+                <select id="net-iface" class="settings-input"></select>
+            </div>
+
+            <div id="net-status" class="net-status"></div>
+
+            <div class="settings-row">
+                <label class="settings-label" for="net-proto">Addressing</label>
+                <select id="net-proto" class="settings-input">
+                    <option value="dhcp">Automatic (DHCP)</option>
+                    <option value="static">Static IP</option>
+                </select>
+            </div>
+
+            <div id="net-static-fields">
+                <div class="settings-row">
+                    <label class="settings-label" for="net-address">IP Address</label>
+                    <input type="text" id="net-address" class="settings-input"
+                           placeholder="192.168.1.50" autocomplete="off"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                </div>
+                <div class="settings-row">
+                    <label class="settings-label" for="net-netmask">Subnet Mask</label>
+                    <input type="text" id="net-netmask" class="settings-input"
+                           placeholder="255.255.255.0" autocomplete="off"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                </div>
+            </div>
+
+            <div id="net-wifi-fields" style="display:none">
+                <div class="settings-row">
+                    <label class="settings-label" for="net-ssid">WiFi Network</label>
+                    <input type="text" id="net-ssid" class="settings-input" list="net-ssid-list"
+                           placeholder="Network name" autocomplete="off"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                    <datalist id="net-ssid-list"></datalist>
+                    <button type="button" id="btn-net-scan" class="btn-save btn-quiet"
+                            style="padding:0.45rem 1rem">Scan</button>
+                </div>
+                <div class="settings-row">
+                    <label class="settings-label" for="net-psk">WiFi Password</label>
+                    <input type="text" id="net-psk" class="settings-input"
+                           placeholder="8–63 characters, or blank for an open network"
+                           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+                </div>
+                <div class="settings-row">
+                    <label class="settings-label">Hidden Network</label>
+                    <label class="toggle-switch" style="flex-shrink:0">
+                        <input type="checkbox" id="net-hidden">
+                        <span class="toggle-track"></span>
+                    </label>
+                </div>
+                <div class="settings-row">
+                    <label class="settings-label" for="net-backup-ssid">Backup WiFi</label>
+                    <input type="text" id="net-backup-ssid" class="settings-input"
+                           placeholder="optional — tried if the first is out of range"
+                           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+                </div>
+                <div class="settings-row">
+                    <label class="settings-label" for="net-backup-psk">Backup Password</label>
+                    <input type="text" id="net-backup-psk" class="settings-input"
+                           placeholder="optional" autocomplete="off"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label" for="net-metric">Route Metric</label>
+                <input type="number" id="net-metric" class="settings-input"
+                       style="max-width:110px;min-width:0" min="0" max="9999" placeholder="auto">
+                <span class="hint" style="flex:1;min-width:180px">
+                    Lowest number wins when two interfaces are up at once.
+                </span>
+            </div>
+
+            <hr class="net-divider">
+
+            <p class="net-note" style="margin-bottom:0.75rem">
+                Gateway and DNS belong to the whole controller, not just the selected
+                interface. Leave them blank when DHCP supplies them.
+            </p>
+
+            <div class="settings-row">
+                <label class="settings-label" for="net-gateway">Gateway</label>
+                <input type="text" id="net-gateway" class="settings-input"
+                       placeholder="192.168.1.1" autocomplete="off"
+                       autocapitalize="off" autocorrect="off" spellcheck="false">
+            </div>
+            <div class="settings-row">
+                <label class="settings-label" for="net-dns1">Primary DNS</label>
+                <input type="text" id="net-dns1" class="settings-input"
+                       placeholder="192.168.1.1" autocomplete="off"
+                       autocapitalize="off" autocorrect="off" spellcheck="false">
+            </div>
+            <div class="settings-row">
+                <label class="settings-label" for="net-dns2">Secondary DNS</label>
+                <input type="text" id="net-dns2" class="settings-input"
+                       placeholder="8.8.8.8" autocomplete="off"
+                       autocapitalize="off" autocorrect="off" spellcheck="false">
+            </div>
+
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
+                <button id="btn-net-save" class="btn-save">Save</button>
+                <button id="btn-net-apply" class="btn-save btn-quiet">Save &amp; Apply Now</button>
+            </div>
+            <span class="hint">
+                <strong>Save</strong> writes the settings and leaves the network alone —
+                they come up at the next reboot. <strong>Save &amp; Apply Now</strong>
+                restarts the interface straight away, which drops this page if you are
+                connected through it.
+            </span>
+        </div>
+    </div>
+
+    <!-- WiFi hotspot (tethering) -->
+    <div class="settings-card">
+        <h2>WiFi Hotspot</h2>
+        <p class="net-note">
+            The controller's own access point, for reaching it when there is no usable
+            network. Join it from a phone or laptop and this page answers at
+            <strong id="teth-address">http://192.168.8.1/</strong>.
+        </p>
+
+        <div class="settings-row">
+            <label class="settings-label" for="teth-mode">Mode</label>
+            <select id="teth-mode" class="settings-input">
+                <option value="0">Automatic — only when nothing else connects</option>
+                <option value="1">Always on</option>
+                <option value="2">Disabled</option>
+            </select>
+        </div>
+        <p class="hint" id="teth-mode-hint" style="margin:-0.35rem 0 0.75rem"></p>
+
+        <div class="settings-row">
+            <label class="settings-label" for="teth-ssid">Hotspot Name</label>
+            <input type="text" id="teth-ssid" class="settings-input"
+                   placeholder="FPP" autocomplete="off"
+                   autocapitalize="off" autocorrect="off" spellcheck="false">
+        </div>
+        <div class="settings-row">
+            <label class="settings-label" for="teth-psk">Password</label>
+            <input type="text" id="teth-psk" class="settings-input"
+                   placeholder="8–63 characters" autocomplete="off"
+                   autocapitalize="off" autocorrect="off" spellcheck="false">
+        </div>
+
+        <div class="net-status">
+            Hotspot settings are read when the controller boots, so a change here takes
+            effect after a reboot.
+        </div>
+
+        <div>
+            <button id="btn-teth-save" class="btn-save">Save Hotspot Settings</button>
         </div>
     </div>
 
@@ -1665,6 +1863,331 @@
                 btn.disabled = false;
             }
         });
+    })();
+
+    // ── Network & WiFi hotspot ────────────────────────────────────────────────
+    // These are FPP's own network settings, reached through the plugin's
+    // /api/network proxy. FPP rewrites an interface's config file from whatever
+    // is posted rather than merging, so the form always sends a whole interface
+    // — including the WPA3 and backup-hidden flags this page doesn't show, which
+    // are carried through from what was loaded.
+    (function () {
+        const $ = id => document.getElementById(id);
+
+        const loading   = $('net-loading');
+        const body      = $('net-body');
+        const ifaceSel  = $('net-iface');
+        const protoSel  = $('net-proto');
+        const statusBox = $('net-status');
+        const staticBox = $('net-static-fields');
+        const wifiBox   = $('net-wifi-fields');
+
+        let interfaces   = {};   // name -> the values the form is editing
+        let selected     = '';
+        let savedGlobals = { gateway: '', dns1: '', dns2: '' };
+        let loaded       = false;
+
+        function api(path, options) {
+            return fetch((window.APP_ROOT || '') + path, options);
+        }
+
+        async function post(path, payload) {
+            let res;
+            try {
+                res = await api(path, {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(payload),
+                });
+            } catch (err) {
+                // Restarting the interface this page came in on kills the
+                // request in flight. Flagged so the caller can tell that apart
+                // from a genuine rejection.
+                const dropped = new Error('The controller stopped answering.');
+                dropped.dropped = true;
+                throw dropped;
+            }
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'The controller rejected the change.');
+            return data;
+        }
+
+        function describe(iface) {
+            const bits = [];
+            bits.push(iface.current_address
+                ? 'Currently ' + iface.current_address +
+                  (iface.current_netmask ? ' / ' + iface.current_netmask : '')
+                : 'No address right now');
+            if (iface.wireless) {
+                bits.push(iface.current_ssid
+                    ? 'joined to "' + iface.current_ssid + '"'
+                    : 'not joined to a network');
+                if (iface.signal !== null && iface.signal !== undefined) {
+                    bits.push(iface.signal + ' dBm');
+                }
+            } else {
+                // Carrier, not just "up": a live cable is what stops the
+                // hotspot coming up in Automatic mode.
+                bits.push(iface.carrier ? 'cable connected' : 'no cable detected');
+            }
+            if (!iface.configured) bits.push('not yet configured here');
+            return bits.join(' · ');
+        }
+
+        function syncProto() {
+            staticBox.style.display = protoSel.value === 'static' ? '' : 'none';
+        }
+
+        function fillForm(name) {
+            const iface = interfaces[name];
+            if (!iface) return;
+            statusBox.textContent  = describe(iface);
+            protoSel.value         = iface.proto === 'static' ? 'static' : 'dhcp';
+            $('net-address').value = iface.address || '';
+            $('net-netmask').value = iface.netmask || '';
+            $('net-metric').value  = iface.route_metric || '';
+            wifiBox.style.display  = iface.wireless ? '' : 'none';
+            if (iface.wireless) {
+                $('net-ssid').value          = iface.ssid || '';
+                $('net-psk').value           = iface.psk || '';
+                $('net-hidden').checked      = !!iface.hidden;
+                $('net-backup-ssid').value   = iface.backup_ssid || '';
+                $('net-backup-psk').value    = iface.backup_psk || '';
+                $('net-ssid-list').innerHTML = '';
+            }
+            syncProto();
+        }
+
+        function readForm(name) {
+            const iface = interfaces[name];
+            if (!iface) return;
+            iface.proto        = protoSel.value;
+            iface.address      = $('net-address').value.trim();
+            iface.netmask      = $('net-netmask').value.trim();
+            iface.route_metric = $('net-metric').value.trim();
+            if (iface.wireless) {
+                iface.ssid        = $('net-ssid').value.trim();
+                iface.psk         = $('net-psk').value;
+                iface.hidden      = $('net-hidden').checked;
+                iface.backup_ssid = $('net-backup-ssid').value.trim();
+                iface.backup_psk  = $('net-backup-psk').value;
+            }
+        }
+
+        function syncTetherHint() {
+            const hint = $('teth-mode-hint');
+            const mode = $('teth-mode').value;
+            if (mode === '0') {
+                hint.textContent =
+                    'Skipped whenever an Ethernet cable has link — even if that network ' +
+                    'never hands out an address. Choose "Always on" for a controller that ' +
+                    'travels between venues.';
+            } else if (mode === '1') {
+                hint.textContent =
+                    'The hotspot runs all the time, alongside whatever else is connected.';
+            } else {
+                hint.textContent =
+                    'No hotspot ever. Lose the wired network and the controller is only ' +
+                    'reachable with a keyboard and screen.';
+            }
+        }
+
+        async function load() {
+            try {
+                const res  = await api('/api/network');
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not read the network settings.');
+
+                interfaces         = {};
+                ifaceSel.innerHTML = '';
+                (data.interfaces || []).forEach(iface => {
+                    interfaces[iface.name] = iface;
+                    const opt = document.createElement('option');
+                    opt.value       = iface.name;
+                    opt.textContent = iface.name + (iface.wireless ? ' — WiFi' : ' — wired');
+                    ifaceSel.appendChild(opt);
+                });
+
+                // The hotspot address is hardcoded in FPP, so take it from the
+                // server rather than keeping a second copy in this prose.
+                if (data.tether_address) {
+                    $('teth-address').textContent = 'http://' + data.tether_address + '/';
+                }
+                const teth = data.tethering || {};
+                $('teth-mode').value = teth.mode || '0';
+                $('teth-ssid').value = teth.ssid || '';
+                $('teth-psk').value  = teth.psk  || '';
+                syncTetherHint();
+                loaded = true;
+
+                if (!ifaceSel.options.length) {
+                    loading.textContent = 'The controller reported no configurable interfaces.';
+                    return;
+                }
+
+                $('net-gateway').value = data.gateway || '';
+                $('net-dns1').value    = data.dns1 || '';
+                $('net-dns2').value    = data.dns2 || '';
+                savedGlobals = {
+                    gateway: data.gateway || '',
+                    dns1:    data.dns1 || '',
+                    dns2:    data.dns2 || '',
+                };
+
+                if (interfaces[selected]) ifaceSel.value = selected;
+                selected = ifaceSel.value;
+                fillForm(selected);
+                loading.style.display = 'none';
+                body.style.display    = '';
+            } catch (err) {
+                loading.style.display = '';
+                loading.textContent   = 'Could not read the network settings: ' + err.message;
+            }
+        }
+
+        ifaceSel.addEventListener('change', () => {
+            readForm(selected);          // keep edits when switching interfaces
+            selected = ifaceSel.value;
+            fillForm(selected);
+        });
+        protoSel.addEventListener('change', syncProto);
+        $('teth-mode').addEventListener('change', syncTetherHint);
+
+        // ── WiFi scan ───────────────────────────────────────────────
+        $('btn-net-scan').addEventListener('click', async () => {
+            const btn = $('btn-net-scan');
+            btn.disabled    = true;
+            btn.textContent = 'Scanning…';
+            try {
+                const res  = await api('/api/network/wifi/scan/' + encodeURIComponent(selected));
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'The scan failed.');
+
+                const list = $('net-ssid-list');
+                list.innerHTML = '';
+                (data.networks || []).forEach(net => {
+                    const opt = document.createElement('option');
+                    opt.value = net.ssid;
+                    opt.label = net.ssid + ' (' + net.signal + ' dBm' +
+                                (net.encrypted ? '' : ', open') + ')';
+                    list.appendChild(opt);
+                });
+                if (!(data.networks || []).length) {
+                    showToast(data.message || 'No networks came back from the scan.', 'error');
+                } else {
+                    showToast('Found ' + data.networks.length +
+                              ' network(s) — open the network box to pick one.', 'success');
+                    $('net-ssid').focus();
+                }
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            } finally {
+                btn.disabled    = false;
+                btn.textContent = 'Scan';
+            }
+        });
+
+        // ── Save ────────────────────────────────────────────────────
+        async function save(apply) {
+            if (!loaded) return;
+            readForm(selected);
+            const iface = interfaces[selected];
+            if (!iface) return;
+
+            const btn   = apply ? $('btn-net-apply') : $('btn-net-save');
+            const label = btn.textContent;
+            btn.disabled    = true;
+            btn.textContent = apply ? 'Applying…' : 'Saving…';
+
+            try {
+                // Gateway and DNS are controller-wide, and each write triggers a
+                // configuration backup on FPP's side — so only send them when
+                // they actually changed.
+                const gateway = $('net-gateway').value.trim();
+                if (gateway !== savedGlobals.gateway) {
+                    await post('/api/network/gateway', { gateway: gateway });
+                    savedGlobals.gateway = gateway;
+                }
+                const dns1 = $('net-dns1').value.trim();
+                const dns2 = $('net-dns2').value.trim();
+                if (dns1 !== savedGlobals.dns1 || dns2 !== savedGlobals.dns2) {
+                    await post('/api/network/dns', { dns1: dns1, dns2: dns2 });
+                    savedGlobals.dns1 = dns1;
+                    savedGlobals.dns2 = dns2;
+                }
+
+                await post('/api/network/interface/' + encodeURIComponent(selected), {
+                    proto:         iface.proto,
+                    address:       iface.address,
+                    netmask:       iface.netmask,
+                    route_metric:  iface.route_metric,
+                    ssid:          iface.ssid,
+                    psk:           iface.psk,
+                    hidden:        iface.hidden,
+                    wpa3:          iface.wpa3,
+                    backup_ssid:   iface.backup_ssid,
+                    backup_psk:    iface.backup_psk,
+                    backup_hidden: iface.backup_hidden,
+                    backup_wpa3:   iface.backup_wpa3,
+                    apply:         !!apply,
+                });
+
+                if (apply) {
+                    showToast(selected + ' restarted with the new settings.', 'success');
+                    load();
+                } else {
+                    showToast('Saved — the settings come up at the next reboot.', 'success');
+                }
+            } catch (err) {
+                if (apply && err.dropped) {
+                    showToast('Settings applied — this page lost the controller, which is ' +
+                              'expected when the interface it is on restarts. Reconnect at ' +
+                              'the new address.', 'success');
+                } else {
+                    showToast('Error: ' + err.message, 'error');
+                }
+            } finally {
+                btn.disabled    = false;
+                btn.textContent = label;
+            }
+        }
+
+        $('btn-net-save').addEventListener('click', () => save(false));
+        $('btn-net-apply').addEventListener('click', () => {
+            if (!confirm(
+                'Restart ' + selected + ' with these settings now?\n\n' +
+                'If this page is reaching the controller through ' + selected + ', it will ' +
+                'lose the connection and you may have to reconnect at a different address.'
+            )) return;
+            save(true);
+        });
+
+        // ── Hotspot ─────────────────────────────────────────────────
+        $('btn-teth-save').addEventListener('click', async () => {
+            if (!loaded) {
+                showToast('The controller\'s settings have not loaded yet.', 'error');
+                return;
+            }
+            const btn   = $('btn-teth-save');
+            const label = btn.textContent;
+            btn.disabled    = true;
+            btn.textContent = 'Saving…';
+            try {
+                await post('/api/network/tethering', {
+                    mode: $('teth-mode').value,
+                    ssid: $('teth-ssid').value.trim(),
+                    psk:  $('teth-psk').value,
+                });
+                showToast('Hotspot saved — reboot the controller to bring it up.', 'success');
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            } finally {
+                btn.disabled    = false;
+                btn.textContent = label;
+            }
+        });
+
+        load();
     })();
 </script>
 {% endblock %}

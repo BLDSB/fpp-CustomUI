@@ -290,6 +290,9 @@ def create_app():
     from app.routes.backup import backup_bp
     app.register_blueprint(backup_bp)
 
+    from app.routes.network import network_bp
+    app.register_blueprint(network_bp)
+
     # Background workers (daemon threads — zero cost when idle). The FPP
     # startup sync waits for fppd to come up before talking to it.
     if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
