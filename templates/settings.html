@@ -632,6 +632,9 @@
             <label for="s-cur-pw">Current PIN</label>
             <input type="password" id="s-cur-pw" maxlength="4" inputmode="numeric"
                    pattern="\d{4}" autocomplete="current-password" placeholder="••••">
+            {% if session.get('is_master') %}
+            <span class="hint">Signed in with the master PIN — enter the master PIN here to reset a forgotten PIN.</span>
+            {% endif %}
         </div>
 
         <div class="form-field">

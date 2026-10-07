@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# fpp_reset_pin.sh — clear the saved PIN(s) and re-run first-run setup.
+# fpp_reset_pin.sh — clear the saved admin PIN and re-run first-run setup.
 #
 # For when the PIN to a headless/kiosk controller is lost. Clears the stored
 # hashes so the UI drops back to the setup page, where the first visitor on the
-# local network chooses a new PIN.
+# local network chooses a new PIN. The master PIN is left untouched.
 #
 # Usage:  sudo bash fpp_reset_pin.sh
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24,13 +24,9 @@ if [ ! -f "$ENV_FILE" ]; then
     exit 1
 fi
 
-echo "▶ Clearing saved PINs in $ENV_FILE ..."
+echo "▶ Clearing the saved admin PIN in $ENV_FILE ..."
 
 sed -i 's|^ADMIN_PASSWORD_HASH=.*|ADMIN_PASSWORD_HASH=|' "$ENV_FILE"
-sed -i 's|^MASTER_PIN_HASH=.*|MASTER_PIN_HASH=|' "$ENV_FILE"
-
-# Older installs predate MASTER_PIN_HASH — add it so the key always exists.
-grep -q '^MASTER_PIN_HASH=' "$ENV_FILE" || echo 'MASTER_PIN_HASH=' >> "$ENV_FILE"
 
 # sed -i rewrites the file as root; the service runs as fpp and must be able to
 # write its own PIN back, so hand ownership back (and keep secrets owner-only).

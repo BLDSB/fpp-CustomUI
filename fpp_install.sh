@@ -59,7 +59,7 @@ content = content.replace('SECRET_KEY=replace-with-a-strong-random-value',
 content = content.replace('INTERNAL_TOKEN=',
                            f'INTERNAL_TOKEN={secrets.token_hex(24)}')
 
-# ADMIN_PASSWORD_HASH and MASTER_PIN_HASH are intentionally left empty.
+# ADMIN_PASSWORD_HASH is intentionally left empty (chosen at first run).
 
 with open(os.path.join(plugin_dir, '.env'), 'w') as f:
     f.write(content)
@@ -71,6 +71,30 @@ else
 fi
 # .env holds the session secret and internal token — keep it owner-only.
 chmod 600 "$PLUGIN_DIR/.env"
+echo ""
+
+# ── 2b. Master PIN — one per install, generated once on first install/upgrade ──
+# Covers fresh installs and upgrades of installs that predate the master PIN.
+# An existing MASTER_PIN_HASH is never touched, so re-running this is safe. The
+# PIN itself is printed once on the closing banner and is not stored anywhere.
+MASTER_PIN=$("$PLUGIN_DIR/venv/bin/python" - "$PLUGIN_DIR/.env" << 'PYEOF'
+import sys, secrets
+import bcrypt
+from dotenv import dotenv_values, set_key
+
+env_path = sys.argv[1]
+if not dotenv_values(env_path).get('MASTER_PIN_HASH'):
+    pin = f"{secrets.randbelow(10000):04d}"
+    hashed = bcrypt.hashpw(pin.encode(), bcrypt.gensalt()).decode()
+    set_key(env_path, 'MASTER_PIN_HASH', hashed, quote_mode='never')
+    print(pin)
+PYEOF
+)
+if [ -n "$MASTER_PIN" ]; then
+    echo "✓ Master PIN generated (shown at the end of the install)."
+else
+    echo "✓ Master PIN already set — keeping it."
+fi
 echo ""
 
 # ── 3. Systemd service ────────────────────────────────────────────────────────
@@ -163,3 +187,15 @@ printf "║%-54s║\n" "$BANNER"
 echo "║  to choose your PIN and finish setup.                ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
+if [ -n "$MASTER_PIN" ]; then
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║  MASTER PIN — record it now, it is shown only once   ║"
+    echo "║                                                      ║"
+    printf "║%-54s║
+" "  $MASTER_PIN"
+    echo "║                                                      ║"
+    echo "║  It always logs in, even if the admin PIN is changed.║"
+    echo "║  Change it later from Settings (master login only).  ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+    echo ""
+fi
