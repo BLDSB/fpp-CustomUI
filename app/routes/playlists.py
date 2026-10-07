@@ -39,6 +39,87 @@ def list_playlists():
         return jsonify({"error": "Could not reach the controller"}), 502
 
 
+_SECTIONS = ("leadIn", "mainPlaylist", "leadOut")
+
+
+def _entry_has_audio(entry, load, seen):
+    """True if one playlist entry plays an audio file, directly or via a sub-playlist."""
+    if not isinstance(entry, dict) or not entry.get("enabled", 1):
+        return False
+    # "both" is sequence + media; "media" is audio alone. A plain "sequence"
+    # entry never plays audio — FPP only starts media from these two types.
+    if entry.get("type") in ("both", "media"):
+        return bool(str(entry.get("mediaName") or "").strip())
+    if entry.get("type") == "playlist":
+        return _playlist_has_audio(entry.get("name") or entry.get("playlistName"), load, seen)
+    return False
+
+
+def _playlist_has_audio(name, load, seen):
+    if not name or name in seen:   # seen guards against playlists that include each other
+        return False
+    seen.add(name)
+    data = load(name)
+    if not isinstance(data, dict):
+        return False
+    return any(
+        _entry_has_audio(e, load, seen)
+        for section in _SECTIONS
+        for e in (data.get(section) or [])
+    )
+
+
+@playlists_bp.get("/api/playlists/audio")
+@login_required
+def playlists_with_audio():
+    """Names of the playlists that play an audio file.
+
+    The media file is recorded in the playlist itself (`mediaName`), so the
+    .fseq files never need to be opened.  Playlist definitions are read straight
+    from FPP's playlists directory — a handful of small files — falling back to
+    FPP's API when that directory is not available.  The Controls page asks once
+    per browser session and again on Refresh.
+    """
+    import json
+    import os
+
+    root = os.path.join(current_app.config.get("FPP_MEDIA_ROOT", "/home/fpp/media"), "playlists")
+    cache = {}
+
+    def load(name):
+        if name in cache:
+            return cache[name]
+        data = None
+        path = os.path.join(root, f"{name}.json")
+        if "/" not in name and "\\" not in name and os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                data = None
+        else:
+            try:
+                resp = requests.get(_fpp(f"/playlist/{quote(name, safe='')}"), timeout=5)
+                resp.raise_for_status()
+                data = resp.json()
+            except (requests.RequestException, ValueError):
+                data = None
+        cache[name] = data
+        return data
+
+    try:
+        resp = requests.get(_fpp("/playlists"), timeout=5)
+        resp.raise_for_status()
+        raw = resp.json()
+        names = raw if isinstance(raw, list) else raw.get("playlists", [])
+    except (requests.RequestException, ValueError) as exc:
+        current_app.logger.error("FPP list playlists error: %s", exc)
+        return jsonify({"error": "Could not reach the controller"}), 502
+
+    audio = [n for n in names if isinstance(n, str) and _playlist_has_audio(n, load, set())]
+    return jsonify({"audio": sorted(audio)})
+
+
 @playlists_bp.post("/api/playlists/<name>/play")
 @login_required
 def play_playlist(name):
@@ -97,7 +178,13 @@ def play_playlist(name):
         data = request.get_json(silent=True) or {}
         repeat = bool(data.get("repeat", True))
         repeat_str = "true" if repeat else "false"
-        resp = requests.get(_fpp(f"/playlist/{quote(name, safe='')}/start/{repeat_str}"), timeout=5)
+        # Not /playlist/<name>/start/<repeat>: FPP 9.5.x decodes the name and
+        # pastes it unencoded into an internal URL, so any name containing a
+        # space fails there — silently, with an HTTP 200 and nothing playing.
+        resp = requests.get(
+            _fpp(f"/command/Start%20Playlist/{quote(name, safe='')}/{repeat_str}/false"),
+            timeout=5,
+        )
         resp.raise_for_status()
         return jsonify({"ok": True})
     except requests.RequestException as exc:
