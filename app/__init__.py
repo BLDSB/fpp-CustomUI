@@ -138,6 +138,41 @@ def _drop_removed_columns(app):
             app.logger.warning("Could not drop column %s.%s: %s", table, column, exc)
 
 
+def _lift_legacy_effect_brightness(app):
+    """One-time lift of effect presets saved at FPP's dim default brightness.
+
+    WLED effects used to be saved with FPP's stock brightness of 128, which is
+    unity gain rather than full brightness (see app/routes/effects.py), so every
+    preset built before the gain slider landed still fires dim from its playlist
+    even though the editor now defaults bright.  Lift those once.
+
+    Guarded by a settings key rather than re-run every boot: after this has run,
+    128 means somebody chose 100% on the new slider, and a restart must not
+    overwrite that.
+    """
+    from app.models import AppSetting, EffectPreset, _loads_list
+    from app.routes.effects import lift_legacy_brightness
+
+    key = "wled_effect_brightness_lifted"
+    try:
+        if db.session.get(AppSetting, key) is not None:
+            return
+        lifted = 0
+        for preset in EffectPreset.query.all():
+            args = lift_legacy_brightness(preset.effect_name, _loads_list(preset.args_json))
+            if args is None:
+                continue
+            preset.args_json = json.dumps(args)
+            lifted += 1
+        db.session.add(AppSetting(key=key, value="1"))
+        db.session.commit()
+        if lifted:
+            app.logger.info("Raised brightness on %d effect preset(s) left at FPP's default", lifted)
+    except Exception as exc:
+        db.session.rollback()
+        app.logger.warning("Could not lift effect preset brightness: %s", exc)
+
+
 def _regenerate_scene_playlists(app):
     """Rewrite all scene playlists to FPP after a restart."""
     with app.app_context():
@@ -258,6 +293,7 @@ def create_app():
             )
         _add_missing_columns(app)
         _drop_removed_columns(app)
+        _lift_legacy_effect_brightness(app)
         _create_turn_off_lights_preset(app)
 
     from app.routes import main as main_blueprint
