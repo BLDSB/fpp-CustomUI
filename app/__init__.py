@@ -275,6 +275,9 @@ def create_app():
     from app.routes.scheduler import scheduler_bp
     app.register_blueprint(scheduler_bp)
 
+    from app.routes.holidays import holidays_bp
+    app.register_blueprint(holidays_bp)
+
     from app.routes.settings import settings_bp
     app.register_blueprint(settings_bp)
 

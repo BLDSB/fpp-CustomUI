@@ -225,6 +225,28 @@ class SceneZone(db.Model):
 
 
 
+class Holiday(db.Model):
+    """Named yearly date range (month/day only) that schedule entries can link to."""
+    __tablename__ = "holidays"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(64), nullable=False, unique=True)
+    start_month = db.Column(db.Integer, nullable=False)
+    start_day = db.Column(db.Integer, nullable=False)
+    end_month = db.Column(db.Integer, nullable=False)
+    end_day = db.Column(db.Integer, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "start_month": self.start_month,
+            "start_day": self.start_day,
+            "end_month": self.end_month,
+            "end_day": self.end_day,
+        }
+
+
 class EffectPreset(db.Model):
     __tablename__ = "effect_presets"
 
