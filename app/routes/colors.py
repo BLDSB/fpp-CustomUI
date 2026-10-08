@@ -1,4 +1,5 @@
 import re
+import threading
 
 import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -6,7 +7,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from app import db
 from app.auth_utils import login_required
 from app.models import (
-    OVERLAY_MODELS, ColorButton, SavedColor, all_overlay_models,
+    OVERLAY_MODELS, ColorButton, SavedColor, all_is_virtual, all_overlay_models,
     expand_overlay_models,
 )
 from app.routes.settings import selectable_zones
@@ -14,6 +15,24 @@ from app.routes.settings import selectable_zones
 colors_bp = Blueprint("colors", __name__)
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+# A real "All" overlay model is switched off by the next zone send.  A virtual
+# "All" (see all_is_virtual) is not a model at all: sending it lights every
+# zone's member models, so that send has to be undone by turning those members
+# off instead.  Only the *first* zone send after an All may do that — the page
+# sends its selected zones in parallel and they must not switch each other off —
+# and a zone set on its own earlier must survive later zone sends, so FPP's own
+# state cannot tell us when.  Hence a flag, guarded so the cleanup finishes
+# before the next send looks at it.
+_all_state_lock = threading.Lock()
+_all_fan_out_lit = False
+
+
+def mark_overlays_cleared():
+    """Forget a lit virtual All; call wherever every overlay model is switched off."""
+    global _all_fan_out_lit
+    with _all_state_lock:
+        _all_fan_out_lit = False
 
 
 def _fpp(path):
@@ -53,21 +72,30 @@ def send_color():
     # Deactivate conflicting models before activating the target.
     # "All" overlaps every zone, so only one group can be active at a time.
     # A grouped zone is really several member overlay models.
+    global _all_fan_out_lit
     targets = expand_overlay_models([model])
-    if model == "All":
-        conflicts = sorted(all_overlay_models() - {"All"})
-    else:
-        conflicts = ["All"]
+    with _all_state_lock:
+        if model == "All":
+            conflicts = sorted(all_overlay_models() - {"All"})
+            _all_fan_out_lit = all_is_virtual()
+        else:
+            conflicts = ["All"]
+            if _all_fan_out_lit:
+                # The lit zones are the leftovers of a virtual All; take them
+                # down so only what was asked for stays on, as a real All
+                # model switching off would.
+                conflicts += sorted(all_overlay_models() - {"All"} - set(targets))
+                _all_fan_out_lit = False
 
-    for conflict in conflicts:
-        try:
-            requests.put(
-                _fpp(f"/overlays/model/{conflict}/state"),
-                json={"State": 0},
-                timeout=3,
-            )
-        except requests.RequestException:
-            pass
+        for conflict in conflicts:
+            try:
+                requests.put(
+                    _fpp(f"/overlays/model/{conflict}/state"),
+                    json={"State": 0},
+                    timeout=3,
+                )
+            except requests.RequestException:
+                pass
 
     try:
         for target in targets:
@@ -99,6 +127,7 @@ def stop_color():
 
 def _deactivate_all_overlays():
     """Deactivate every known overlay model (fire-and-forget per model)."""
+    mark_overlays_cleared()
     errors = []
     for model in sorted(all_overlay_models()):
         try:
