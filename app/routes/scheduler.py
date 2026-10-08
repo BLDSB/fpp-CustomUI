@@ -1,10 +1,12 @@
+import calendar
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app.auth_utils import login_required
+from app.models import Holiday
 
 scheduler_bp = Blueprint("scheduler", __name__)
 
@@ -51,6 +53,64 @@ def _save_schedule(entries):
     except Exception:
         pass
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Holidays: named yearly month/day ranges that entries can link to
+# ---------------------------------------------------------------------------
+
+def _clamped(year, month, day):
+    return date(year, month, min(day, calendar.monthrange(year, month)[1]))
+
+
+def resolve_holiday_dates(holiday, today=None):
+    """Return (startDate, endDate) strings for the current/next occurrence.
+
+    A range whose end month/day is before its start spans New Year. We pick
+    the occurrence that has not yet finished, so a finished season rolls
+    forward to next year.
+    """
+    today = today or date.today()
+    spans = (holiday.end_month, holiday.end_day) < (holiday.start_month, holiday.start_day)
+    for start_year in (today.year - 1, today.year, today.year + 1):
+        start = _clamped(start_year, holiday.start_month, holiday.start_day)
+        end = _clamped(start_year + (1 if spans else 0), holiday.end_month, holiday.end_day)
+        if end >= today:
+            return start.isoformat(), end.isoformat()
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def sync_holiday_entries(entries=None, rename=None, delete_name=None):
+    """Re-apply holiday dates to linked entries and save if anything changed.
+
+    rename=(old, new) rewrites the link; delete_name unlinks (dates kept).
+    Returns (entries, changed_count).
+    """
+    if entries is None:
+        entries = _load_schedule()
+    holidays = {h.name: h for h in Holiday.query.all()}
+    changed = 0
+    for entry in entries:
+        name = entry.get("holiday")
+        if not name:
+            continue
+        if rename and name == rename[0]:
+            name = entry["holiday"] = rename[1]
+            changed += 1
+        if delete_name and name == delete_name:
+            del entry["holiday"]
+            changed += 1
+            continue
+        holiday = holidays.get(name)
+        if not holiday:
+            continue
+        start, end = resolve_holiday_dates(holiday)
+        if entry.get("startDate") != start or entry.get("endDate") != end:
+            entry["startDate"], entry["endDate"] = start, end
+            changed += 1
+    if changed:
+        _save_schedule(entries)
+    return entries, changed
 
 
 def _validate(data):
@@ -115,14 +175,21 @@ def _validate(data):
     except (TypeError, ValueError):
         return None, "stopType must be 0 (Graceful), 1 (Hard Stop), or 2 (Immediate)"
 
-    start_date = _parse_date(data.get("startDate"))
-    end_date = _parse_date(data.get("endDate"))
-    if start_date is None or end_date is None:
-        return None, "startDate and endDate must be YYYY-MM-DD or empty"
-    start_date = start_date or DEFAULT_START_DATE
-    end_date = end_date or DEFAULT_END_DATE
-    if start_date > end_date:
-        return None, "startDate must not be after endDate"
+    holiday_name = str(data.get("holiday", "")).strip()
+    if holiday_name:
+        holiday = Holiday.query.filter_by(name=holiday_name).first()
+        if not holiday:
+            return None, f"Unknown holiday: {holiday_name}"
+        start_date, end_date = resolve_holiday_dates(holiday)
+    else:
+        start_date = _parse_date(data.get("startDate"))
+        end_date = _parse_date(data.get("endDate"))
+        if start_date is None or end_date is None:
+            return None, "startDate and endDate must be YYYY-MM-DD or empty"
+        start_date = start_date or DEFAULT_START_DATE
+        end_date = end_date or DEFAULT_END_DATE
+        if start_date > end_date:
+            return None, "startDate must not be after endDate"
 
     entry = {
         "enabled":         enabled,
@@ -137,6 +204,8 @@ def _validate(data):
         "startDate":       start_date,
         "endDate":         end_date,
     }
+    if holiday_name:
+        entry["holiday"] = holiday_name
     if command:
         entry["command"] = command
         entry["args"] = args if isinstance(args, list) else []
@@ -162,7 +231,8 @@ def schedule_page():
 @login_required
 def list_schedule():
     try:
-        return jsonify({"entries": _load_schedule()})
+        entries, _ = sync_holiday_entries()
+        return jsonify({"entries": entries})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 502
 
