@@ -256,7 +256,7 @@
         border-left: 1px solid var(--border-dim);
         padding-left: 1.6rem;
     }
-    .sched-seg-next { flex: 1 1 240px; }
+    .sched-seg-next { flex: 1 1 120px; }
     .sched-label {
         font-size: 0.72rem;
         font-weight: 600;
@@ -271,7 +271,13 @@
         color: var(--text);
         white-space: nowrap;
     }
-    .sched-seg-next .sched-value { font-weight: 500; white-space: normal; }
+    /* One line with an ellipsis so a long entry can't push the Schedule Preview
+       button onto its own row; hovering scrolls the rest into view. */
+    .sched-seg-next .sched-value {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
     .sched-value.dim { color: var(--text-dim); font-weight: 500; }
 
     @media (max-width: 700px) {
@@ -282,8 +288,86 @@
         }
         .sched-seg + .sched-seg { border-left: none; padding-left: 0; }
         .sched-seg-next { grid-column: 1 / -1; }
-        .sched-value { white-space: normal; }
+        .sched-value, .sched-seg-next .sched-value { white-space: normal; overflow: visible; }
     }
+
+    /* ── Schedule preview button + popup ── */
+    .sched-seg-btn { justify-content: center; margin-left: auto; }
+    .btn-preview {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+        border-radius: 5px;
+        padding: 0.4rem 0.9rem;
+        font-size: 0.82rem;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.15s, color 0.15s;
+    }
+    .btn-preview:hover { background: var(--accent); color: #fff; }
+    @media (max-width: 700px) {
+        .sched-seg-btn { grid-column: 1 / -1; margin-left: 0; }
+        .btn-preview { width: 100%; }
+    }
+
+    #preview-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        background: rgba(7,9,26,0.7);
+        display: none;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 84px 0.75rem 1rem;
+        backdrop-filter: var(--blur);
+    }
+    #preview-overlay.open { display: flex; }
+    #preview-modal {
+        background: var(--surface-hi);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        width: min(640px, 100%);
+        max-height: calc(100vh - 100px);
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    .preview-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1rem 1.25rem 0.75rem;
+    }
+    .preview-head h3 { font-size: 1rem; font-weight: 700; }
+    .preview-head .sub { font-size: 0.78rem; color: var(--text-dim); font-weight: 500; }
+    #preview-close {
+        background: none; border: none; color: var(--text-dim);
+        font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0.1rem 0.4rem;
+    }
+    #preview-close:hover { color: var(--text); }
+    #preview-body { overflow-y: auto; padding: 0 1.25rem 1.1rem; }
+    .preview-note { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0; }
+    .preview-note.warn { color: #f1c40f; }
+    .preview-day {
+        position: sticky; top: 0;
+        background: var(--surface-hi);
+        font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--text-dim);
+        padding: 0.7rem 0 0.3rem;
+        border-bottom: 1px solid var(--border-dim);
+    }
+    .preview-row {
+        display: flex; flex-wrap: wrap; gap: 0.15rem 1rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border-dim);
+        font-size: 0.88rem;
+    }
+    .preview-time { flex: 0 0 11.5rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .preview-what { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+    .preview-meta { color: var(--text-dim); font-size: 0.78rem; }
+    .preview-row.skipped .preview-what { color: #e74c3c; }
 
     /* ── Loop toggle pill ── */
     .toggle-pill {
@@ -336,6 +420,23 @@
     <div class="sched-seg sched-seg-next">
         <span class="sched-label">Next Playlist</span>
         <span class="sched-value dim" id="sched-next">—</span>
+    </div>
+    <div class="sched-seg sched-seg-btn">
+        <button id="btn-preview" class="btn-preview" aria-haspopup="dialog">&#128197; Schedule Preview</button>
+    </div>
+</div>
+
+<!-- Schedule preview popup -->
+<div id="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+    <div id="preview-modal">
+        <div class="preview-head">
+            <div>
+                <h3 id="preview-title">Schedule Preview</h3>
+                <div class="sub" id="preview-sub"></div>
+            </div>
+            <button id="preview-close" aria-label="Close">&times;</button>
+        </div>
+        <div id="preview-body"></div>
     </div>
 </div>
 
@@ -608,16 +709,108 @@
         const nextTime = tidy(nx.scheduledStartTimeStr) || tidy(s.next_playlist?.start_time);
         if (nextName) {
             setSched(schedEls.next, `'${nextName}'${nextTime ? ` on ${nextTime}` : ''}`, false);
+            schedEls.next.title = schedEls.next.textContent;
         } else {
             setSched(schedEls.next, 'None scheduled', true);
+            schedEls.next.title = '';
         }
     }
+
+    // Hover-scroll the Next Playlist line when it is cut off by the ellipsis.
+    // Speed is fixed (px/s) so short overflows do not whip past.
+    (function () {
+        const el = schedEls.next;
+        let raf = null;
+        function stop() {
+            cancelAnimationFrame(raf);
+            el.scrollLeft = 0;
+            el.style.textOverflow = '';
+        }
+        el.addEventListener('mouseenter', () => {
+            const max = el.scrollWidth - el.clientWidth;
+            if (max <= 0) return;
+            el.style.textOverflow = 'clip';
+            const t0 = performance.now() + 400;   // brief pause before moving
+            const step = now => {
+                el.scrollLeft = Math.min(max, Math.max(0, (now - t0) / 1000 * 60));
+                if (el.scrollLeft < max) raf = requestAnimationFrame(step);
+            };
+            raf = requestAnimationFrame(step);
+        });
+        el.addEventListener('mouseleave', stop);
+    })();
 
     function schedulerUnavailable() {
         setSched(schedEls.status, 'Unavailable', true);
         schedEls.stopLabel.textContent = 'Graceful Stop At';
         [schedEls.started, schedEls.stop, schedEls.next].forEach(el => setSched(el, '—', true));
     }
+
+    // ── Schedule preview popup ─────────────────────────────────
+    // fppd resolves the next ~28 days of runs; the server just reshapes them.
+    const previewOverlay = document.getElementById('preview-overlay');
+    const previewBody = document.getElementById('preview-body');
+    const previewSub = document.getElementById('preview-sub');
+
+    function dayLabel(iso) {
+        const [y, m, d] = iso.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString(undefined,
+            { weekday: 'long', month: 'short', day: 'numeric' });
+    }
+
+    function renderPreview(data) {
+        const days = data.days || 28;
+        previewSub.textContent = `Next ${days} day${days === 1 ? '' : 's'}`;
+        let html = '';
+        if (!data.enabled) html += '<p class="preview-note warn">The scheduler is currently disabled.</p>';
+        if (data.extends) {
+            html += `<p class="preview-note">Some entries run past the ${days}-day window; later dates are added automatically as time passes.</p>`;
+        }
+        if (!data.events.length) {
+            html += '<p class="empty-state">Nothing scheduled.</p>';
+        }
+        let lastDay = '';
+        data.events.forEach(ev => {
+            if (ev.date !== lastDay) {
+                lastDay = ev.date;
+                html += `<div class="preview-day">${escHtml(dayLabel(ev.date))}</div>`;
+            }
+            if (ev.kind === 'playlist') {
+                const until = ev.endDate !== ev.date ? `${ev.end} (${dayLabel(ev.endDate).split(',')[0]})` : ev.end;
+                const meta = ev.skipped
+                    ? 'Skipped \u2014 lower priority than what is already running'
+                    : [ev.repeat ? 'Repeating' : 'Non-repeating', ev.stop && `${ev.stop} stop`].filter(Boolean).join(' \u00B7 ');
+                html += `<div class="preview-row${ev.skipped ? ' skipped' : ''}">
+                    <span class="preview-time">${escHtml(ev.start)} \u2013 ${escHtml(until)}</span>
+                    <span class="preview-what">${escHtml(ev.name)}<div class="preview-meta">${escHtml(meta)}</div></span>
+                </div>`;
+            } else {
+                html += `<div class="preview-row">
+                    <span class="preview-time">${escHtml(ev.start)}</span>
+                    <span class="preview-what">${escHtml(ev.name)}<div class="preview-meta">Command</div></span>
+                </div>`;
+            }
+        });
+        previewBody.innerHTML = html;
+    }
+
+    async function openPreview() {
+        previewOverlay.classList.add('open');
+        previewSub.textContent = '';
+        previewBody.innerHTML = '<p class="empty-state">Loading\u2026</p>';
+        try {
+            renderPreview(await apiFetch('/api/schedule/preview'));
+        } catch (err) {
+            previewBody.innerHTML = `<p class="empty-state">Could not load the schedule: ${escHtml(err.message)}</p>`;
+        }
+    }
+
+    function closePreview() { previewOverlay.classList.remove('open'); }
+
+    document.getElementById('btn-preview').addEventListener('click', openPreview);
+    document.getElementById('preview-close').addEventListener('click', closePreview);
+    previewOverlay.addEventListener('click', e => { if (e.target === previewOverlay) closePreview(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closePreview(); });
 
     // ── Poll FPP status ────────────────────────────────────────
     async function pollStatus() {
