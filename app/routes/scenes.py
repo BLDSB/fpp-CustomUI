@@ -78,6 +78,8 @@ def _reset_overlays():
     except requests.RequestException:
         pass
 
+    from app.routes.colors import mark_overlays_cleared
+    mark_overlays_cleared()
     for model in sorted(all_overlay_models()):
         try:
             requests.put(_fpp(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
