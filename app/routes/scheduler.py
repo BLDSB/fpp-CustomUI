@@ -281,3 +281,70 @@ def delete_entry(idx):
         return jsonify({"ok": True, "entries": entries})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 502
+
+
+# ---------------------------------------------------------------------------
+# Upcoming-events preview (the Controls page "Schedule Preview" popup)
+# ---------------------------------------------------------------------------
+
+def _clock(dt):
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+@scheduler_bp.get("/api/schedule/preview")
+@login_required
+def schedule_preview():
+    """What fppd will actually run over its look-ahead window (28 days by default).
+
+    fppd has already resolved solar times, day rules, date ranges and holidays
+    into `items`, so we only reshape them; see the note on /api/schedule in the
+    project docs for why we never recompute this from the raw entries.
+    """
+    try:
+        resp = requests.get(f"{_fpp_base()}/fppd/schedule", timeout=5)
+        resp.raise_for_status()
+        sched = resp.json().get("schedule", {})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    entries = {e.get("id"): e for e in sched.get("entries", [])}
+    running = []  # (end epoch, priority) for playlists that have started and not ended
+    events = []
+    for item in sched.get("items", []):
+        start = int(item.get("startTime", 0))
+        start_dt = datetime.fromtimestamp(start)
+        entry = entries.get(item.get("id"), {})
+        args = item.get("args") or []
+        event = {
+            "date":  start_dt.strftime("%Y-%m-%d"),
+            "start": _clock(start_dt),
+            "name":  str(args[0]) if args else "",
+        }
+        if item.get("command") == "Start Playlist":
+            end = int(item.get("endTime", 0))
+            priority = item.get("priority", 0)
+            running = [r for r in running if r[0] > start]
+            skipped = bool(running) and priority >= running[-1][1]
+            if not skipped:
+                running.append((end, priority))
+            event.update({
+                "kind":    "playlist",
+                "end":     _clock(datetime.fromtimestamp(end)),
+                "endDate": datetime.fromtimestamp(end).strftime("%Y-%m-%d"),
+                "repeat":  entry.get("repeat") == 1,
+                "stop":    entry.get("stopTypeStr", ""),
+                "skipped": skipped,
+            })
+        else:
+            event.update({
+                "kind": "command",
+                "name": " | ".join([str(item.get("command", ""))] + [str(a) for a in args]),
+            })
+        events.append(event)
+
+    return jsonify({
+        "enabled":  sched.get("enabled", 1) != 0,
+        "days":     sched.get("scheduleDistance", 28),
+        "extends":  bool(sched.get("schedulesExtendBeyondDistance")),
+        "events":   events,
+    })
