@@ -431,20 +431,39 @@
     }
 
     // ── Zones ───────────────────────────────────────────────────
+    // The "All" model overlaps every numbered zone, so it is never checked
+    // alongside them — running one effect on both would draw it twice.
+    const ALL_MODEL = 'All';
     const chkAll   = document.getElementById('chk-all-zones');
+    const allChk   = () => document.querySelector(`.zone-chk[value="${ALL_MODEL}"]`);
     const zoneChks = () => [...document.querySelectorAll('.zone-chk')];
+    const numbered = () => zoneChks().filter(c => c.value !== ALL_MODEL);
 
     chkAll.addEventListener('change', () => {
-        zoneChks().forEach(c => c.checked = chkAll.checked);
+        const zones = numbered();
+        if (allChk()) allChk().checked = !zones.length && chkAll.checked;
+        zones.forEach(c => c.checked = chkAll.checked);
+        syncAllZonesCheckbox();
     });
     document.querySelectorAll('.zone-chk').forEach(c => {
-        c.addEventListener('change', syncAllZonesCheckbox);
+        c.addEventListener('change', () => {
+            if (c.checked) {
+                if (c.value === ALL_MODEL) numbered().forEach(o => o.checked = false);
+                else if (allChk()) allChk().checked = false;
+            }
+            syncAllZonesCheckbox();
+        });
     });
     function syncAllZonesCheckbox() {
-        const all  = zoneChks();
-        const numChecked = all.filter(c => c.checked).length;
-        chkAll.checked       = numChecked === all.length;
-        chkAll.indeterminate = numChecked > 0 && numChecked < all.length;
+        const zones = numbered();
+        if (!zones.length) {
+            chkAll.checked       = !!(allChk() && allChk().checked);
+            chkAll.indeterminate = false;
+            return;
+        }
+        const numChecked = zones.filter(c => c.checked).length;
+        chkAll.checked       = numChecked === zones.length;
+        chkAll.indeterminate = numChecked > 0 && numChecked < zones.length;
     }
     function getSelectedModels() {
         return zoneChks().filter(c => c.checked).map(c => c.value);

@@ -7,8 +7,9 @@ from app import db
 from app.auth_utils import login_required
 from app.models import (
     OVERLAY_MODELS, ColorButton, SavedColor, all_overlay_models,
-    expand_overlay_models, get_all_zones,
+    expand_overlay_models,
 )
+from app.routes.settings import selectable_zones
 
 colors_bp = Blueprint("colors", __name__)
 
@@ -27,8 +28,7 @@ def _hex_to_rgb(hex_color):
 @colors_bp.get("/colors")
 @login_required
 def colors_page():
-    zones = [z.to_dict() for z in get_all_zones() if z.slot != 0]
-    return render_template("colors.html", zones=zones)
+    return render_template("colors.html", zones=selectable_zones())
 
 
 @colors_bp.post("/colors/send")

@@ -8,7 +8,8 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from app import db
 from app.auth_utils import login_required
 from app.fpp_playlist import build_playlist_def, effect_entries
-from app.models import EffectPreset, expand_overlay_models, get_all_zones
+from app.models import EffectPreset, expand_overlay_models
+from app.routes.settings import selectable_zones
 
 effects_bp = Blueprint("effects", __name__)
 
@@ -139,7 +140,6 @@ def _delete_effect_playlist(preset):
 @effects_bp.get("/effects")
 @login_required
 def effects_page():
-    zones = [z.to_dict() for z in get_all_zones() if z.slot != 0 and not z.hidden]
     # One source of truth for the gain scale: the page's slider and the startup
     # preset lift have to agree on what 100% means.
     gain = {
@@ -148,7 +148,7 @@ def effects_page():
         "min":     WLED_GAIN_MIN,
         "max":     WLED_GAIN_MAX,
     }
-    return render_template("effects.html", zones=zones, gain=gain)
+    return render_template("effects.html", zones=selectable_zones(), gain=gain)
 
 
 @effects_bp.get("/api/effects/list")
