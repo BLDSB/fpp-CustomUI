@@ -372,3 +372,27 @@ def test_apply_still_succeeds_when_the_read_back_is_unavailable(client, fpp):
     resp = client.post(f"/api/scenes/{scene['id']}/apply")
     assert resp.status_code == 200
     assert len(activation_calls(fpp, "Zone 1")) == 1
+
+
+def test_schedule_preview_shows_the_scene_cut_short_by_the_higher_priority_playlist(client, fpp):
+    from datetime import datetime
+
+    def epoch(h, m=0):
+        return int(datetime(2026, 10, 9, h, m).timestamp())
+
+    fpp.fppd_schedule = {
+        "enabled": 1, "scheduleDistance": 28,
+        "entries": [{"id": 1, "playlist": "Playlist 1", "repeat": 1, "stopTypeStr": "Graceful"},
+                    {"id": 2, "playlist": "Scene - All of the colors", "repeat": 1, "stopTypeStr": "Graceful"}],
+        "items": [
+            {"id": 2, "command": "Start Playlist", "args": ["Scene - All of the colors", "true", "false"],
+             "priority": 2, "startTime": epoch(19), "endTime": epoch(22)},
+            {"id": 1, "command": "Start Playlist", "args": ["Playlist 1", "true", "false"],
+             "priority": 1, "startTime": epoch(21, 10), "endTime": epoch(23, 11)},
+        ],
+    }
+    data = client.get("/api/schedule/preview").get_json()
+    scene, playlist = data["events"]
+    assert scene["cutAt"] == "9:10 PM" and scene["cutBy"] == "Playlist 1"
+    assert scene["end"] == "10:00 PM"
+    assert "cutAt" not in playlist and playlist["skipped"] is False
