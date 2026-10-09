@@ -269,6 +269,27 @@ def update_entry(idx):
         return jsonify({"error": str(exc)}), 502
 
 
+@scheduler_bp.post("/api/schedule/entry/<int:idx>/move")
+@login_required
+def move_entry(idx):
+    """Move an entry up/down the list. FPP gives earlier entries higher priority."""
+    direction = (request.get_json(silent=True) or {}).get("direction")
+    if direction not in ("up", "down", "top", "bottom"):
+        return jsonify({"error": "direction must be up, down, top or bottom"}), 400
+    try:
+        entries = _load_schedule()
+        if idx < 0 or idx >= len(entries):
+            return jsonify({"error": "Entry not found"}), 404
+        target = {"up": idx - 1, "down": idx + 1, "top": 0, "bottom": len(entries) - 1}[direction]
+        target = max(0, min(target, len(entries) - 1))
+        if target != idx:
+            entries.insert(target, entries.pop(idx))
+            _save_schedule(entries)
+        return jsonify({"ok": True, "entries": entries})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
 @scheduler_bp.delete("/api/schedule/entry/<int:idx>")
 @login_required
 def delete_entry(idx):
