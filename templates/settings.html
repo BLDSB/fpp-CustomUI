@@ -544,23 +544,65 @@
                    placeholder="Same as Gmail address"
                    value="{{ settings.get('alert_email_from', '') | e }}">
         </div>
-        <div class="settings-row">
+        <div class="settings-row" style="flex-wrap:wrap">
             <label class="settings-label">Send Alerts To</label>
             <input type="text" id="s-alert-email-to" class="settings-input"
                    placeholder="email or 5551234567@vtext.com"
                    value="{{ settings.get('alert_email_to', '') | e }}">
+            <div style="flex-basis:100%;display:flex;gap:1rem;flex-wrap:wrap;margin:0.25rem 0 0.4rem">
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to1-missed" {{ 'checked' if settings.get('alert_to1_missed') != '0' else '' }}>
+                    Missed show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to1-upcoming" {{ 'checked' if settings.get('alert_to1_upcoming') != '0' else '' }}>
+                    Upcoming show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to1-nothing" {{ 'checked' if settings.get('alert_to1_nothing') != '0' else '' }}>
+                    Nothing scheduled
+                </label>
+            </div>
         </div>
-        <div class="settings-row">
+        <div class="settings-row" style="flex-wrap:wrap">
             <label class="settings-label">Recipient 2</label>
             <input type="text" id="s-alert-email-to-2" class="settings-input"
                    placeholder="optional"
                    value="{{ settings.get('alert_email_to_2', '') | e }}">
+            <div style="flex-basis:100%;display:flex;gap:1rem;flex-wrap:wrap;margin:0.25rem 0 0.4rem">
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to2-missed" {{ 'checked' if settings.get('alert_to2_missed') != '0' else '' }}>
+                    Missed show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to2-upcoming" {{ 'checked' if settings.get('alert_to2_upcoming') != '0' else '' }}>
+                    Upcoming show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to2-nothing" {{ 'checked' if settings.get('alert_to2_nothing') != '0' else '' }}>
+                    Nothing scheduled
+                </label>
+            </div>
         </div>
-        <div class="settings-row">
+        <div class="settings-row" style="flex-wrap:wrap">
             <label class="settings-label">Recipient 3</label>
             <input type="text" id="s-alert-email-to-3" class="settings-input"
                    placeholder="optional"
                    value="{{ settings.get('alert_email_to_3', '') | e }}">
+            <div style="flex-basis:100%;display:flex;gap:1rem;flex-wrap:wrap;margin:0.25rem 0 0.4rem">
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to3-missed" {{ 'checked' if settings.get('alert_to3_missed') != '0' else '' }}>
+                    Missed show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to3-upcoming" {{ 'checked' if settings.get('alert_to3_upcoming') != '0' else '' }}>
+                    Upcoming show
+                </label>
+                <label style="display:flex;align-items:center;gap:0.3rem;font-size:0.8rem;color:var(--text-dim)">
+                    <input type="checkbox" id="s-alert-to3-nothing" {{ 'checked' if settings.get('alert_to3_nothing') != '0' else '' }}>
+                    Nothing scheduled
+                </label>
+            </div>
         </div>
         <div class="settings-row">
             <label class="settings-label">Check Delay</label>
@@ -569,6 +611,54 @@
                        style="max-width:80px" min="1" max="60"
                        value="{{ settings.get('alert_delay_minutes', '5') | e }}">
                 <span style="font-size:0.82rem;color:var(--text-dim)">minutes after scheduled start</span>
+            </div>
+        </div>
+
+        <h3 style="font-size:0.9rem;margin:1.1rem 0 0.4rem">Upcoming show reminders</h3>
+        <p style="font-size:0.82rem;color:var(--text-dim);margin:0 0 0.6rem">
+            Email a heads-up before a show starts, but only the first time it plays after
+            a quiet stretch &mdash; a show that plays every night is announced once, not nightly.
+            Recipients choose which emails they get with the checkboxes above.
+        </p>
+        <div style="display:flex;align-items:center;gap:0.65rem;margin-bottom:0.6rem">
+            <label style="font-size:0.82rem;font-weight:600;color:var(--text-dim);letter-spacing:0.06em;text-transform:uppercase">
+                Enable Reminders
+            </label>
+            <label class="toggle-switch" style="flex-shrink:0">
+                <input type="checkbox" id="s-upcoming-enabled"
+                    {{ 'checked' if settings.get('upcoming_enabled') == '1' else '' }}>
+                <span class="toggle-track"></span>
+            </label>
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Remind</label>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                <input type="number" id="s-upcoming-lead" class="settings-input"
+                       style="max-width:70px" min="1" max="14"
+                       value="{{ settings.get('upcoming_lead_days', '1') | e }}">
+                <span style="font-size:0.82rem;color:var(--text-dim)">day(s) before, at</span>
+                <input type="number" id="s-upcoming-hour" class="settings-input"
+                       style="max-width:70px" min="0" max="23"
+                       value="{{ settings.get('upcoming_send_hour', '9') | e }}">
+                <span style="font-size:0.82rem;color:var(--text-dim)">o'clock (0&ndash;23)</span>
+            </div>
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Quiet Gap</label>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                <input type="number" id="s-upcoming-gap" class="settings-input"
+                       style="max-width:80px" min="1" max="365"
+                       value="{{ settings.get('upcoming_gap_days', '14') | e }}">
+                <span style="font-size:0.82rem;color:var(--text-dim)">days without playing before a show counts as starting again</span>
+            </div>
+        </div>
+        <div class="settings-row">
+            <label class="settings-label">Empty Warning</label>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                <input type="number" id="s-upcoming-empty" class="settings-input"
+                       style="max-width:80px" min="0" max="28"
+                       value="{{ settings.get('upcoming_empty_warn_days', '0') | e }}">
+                <span style="font-size:0.82rem;color:var(--text-dim)">days &mdash; email once if nothing is scheduled in that time (0 = off)</span>
             </div>
         </div>
 
@@ -583,6 +673,10 @@
             <button id="btn-test-alert" class="btn-save"
                     style="background:transparent;border:1px solid var(--accent);color:var(--accent)">
                 Send Test Email
+            </button>
+            <button id="btn-test-reminder" class="btn-save"
+                    style="background:transparent;border:1px solid var(--accent);color:var(--accent)">
+                Send Test Reminder
             </button>
         </div>
     </div>
@@ -1853,6 +1947,14 @@
                     alert_email_to_2:    document.getElementById('s-alert-email-to-2').value.trim(),
                     alert_email_to_3:    document.getElementById('s-alert-email-to-3').value.trim(),
                     alert_delay_minutes: document.getElementById('s-alert-delay').value.trim(),
+                    upcoming_enabled:    document.getElementById('s-upcoming-enabled').checked ? '1' : '0',
+                    upcoming_lead_days:  document.getElementById('s-upcoming-lead').value.trim(),
+                    upcoming_send_hour:  document.getElementById('s-upcoming-hour').value.trim(),
+                    upcoming_gap_days:   document.getElementById('s-upcoming-gap').value.trim(),
+                    upcoming_empty_warn_days: document.getElementById('s-upcoming-empty').value.trim(),
+                    ...Object.fromEntries([1, 2, 3].flatMap(n => ['missed', 'upcoming', 'nothing'].map(k =>
+                        ['alert_to' + n + '_' + k,
+                         document.getElementById('s-alert-to' + n + '-' + k).checked ? '1' : '0']))),
                 }),
             });
             const data = await res.json();
@@ -1902,6 +2004,10 @@
             s.verifying.forEach(v => {
                 html += '<br>Verifying <strong>' + v.playlist + '</strong> at ' + v.at + '.';
             });
+            if (s.upcoming_enabled && s.recipients_by_kind) {
+                const n = s.recipients_by_kind.upcoming.length;
+                html += '<br>Upcoming-show reminders are on — ' + n + ' recipient' + (n === 1 ? '' : 's') + '.';
+            }
             box.innerHTML = html;
         } catch (err) {
             box.textContent = 'Could not read monitor status.';
@@ -1927,6 +2033,26 @@
         } finally {
             btn.disabled = false;
             btn.textContent = 'Send Test Email';
+        }
+    });
+
+    document.getElementById('btn-test-reminder').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-test-reminder');
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
+        try {
+            const res  = await fetch((window.APP_ROOT||'') + '/api/alerts/test-reminder', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            showToast('Test reminder sent to ' + (data.sent_to || 'your recipients'), 'success');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Send Test Reminder';
         }
     });
 })();

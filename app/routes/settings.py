@@ -30,6 +30,18 @@ _ALLOWED_KEYS = {
     "alert_smtp_user", "alert_smtp_pass",
     "alert_email_from", "alert_delay_minutes",
     "alert_email_to", "alert_email_to_2", "alert_email_to_3",
+    # Per-recipient switches: alert_to<slot>_<kind> = "1"/"0"
+    *{f"alert_to{slot}_{kind}" for slot in (1, 2, 3) for kind in ("missed", "upcoming", "nothing")},
+    # Upcoming-show reminders
+    "upcoming_enabled", "upcoming_lead_days", "upcoming_send_hour",
+    "upcoming_gap_days", "upcoming_empty_warn_days",
+}
+# key -> (low, high, label) for the reminder numbers the monitor thread reads.
+_UPCOMING_RANGES = {
+    "upcoming_lead_days":       (1, 14,  "Reminder lead time (days)"),
+    "upcoming_send_hour":       (0, 23,  "Send hour"),
+    "upcoming_gap_days":        (1, 365, "Quiet gap (days)"),
+    "upcoming_empty_warn_days": (0, 28,  "Nothing-scheduled warning (days)"),
 }
 _URL_RE    = re.compile(r"^https?://", re.IGNORECASE)
 _COLOR_RE  = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -101,6 +113,18 @@ def save_settings():
                 return jsonify({"error": "Alert delay must be 1–1440 minutes"}), 400
             if key == "genius_pro_count" and not 0 <= n <= 8:
                 return jsonify({"error": "Controller count must be 0–8"}), 400
+
+        if key in _UPCOMING_RANGES and value:
+            lo, hi, label = _UPCOMING_RANGES[key]
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                return jsonify({"error": f"{label} must be a number"}), 400
+            if not lo <= n <= hi:
+                return jsonify({"error": f"{label} must be {lo}–{hi}"}), 400
+
+        if key.startswith("alert_to") and value not in ("0", "1"):
+            return jsonify({"error": f"'{key}' must be on or off"}), 400
 
         if key.startswith("genius_pro_url_") and value and not _URL_RE.match(value):
             return jsonify({"error": f"'{key}' must start with http:// or https://"}), 400
@@ -1070,6 +1094,16 @@ def set_ui_path():
 def test_alert_email():
     from app.alert_monitor import send_test_email
     ok, detail = send_test_email(current_app._get_current_object())
+    if ok:
+        return jsonify({"ok": True, "sent_to": detail})
+    return jsonify({"error": detail}), 502
+
+
+@settings_bp.post("/api/alerts/test-reminder")
+@login_required
+def test_reminder_email():
+    from app.alert_monitor import send_test_reminder
+    ok, detail = send_test_reminder(current_app._get_current_object())
     if ok:
         return jsonify({"ok": True, "sent_to": detail})
     return jsonify({"error": detail}), 502

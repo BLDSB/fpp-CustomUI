@@ -107,11 +107,26 @@ def _load_settings(app):
 _RECIPIENT_KEYS = ("alert_email_to", "alert_email_to_2", "alert_email_to_3")
 _RECIPIENT_SPLIT = re.compile(r"[,;]")
 
+# Each recipient can opt in or out of each kind of email. Stored per slot as
+# alert_to<N>_<kind> = "1"/"0"; a missing key means on, so installs that
+# predate these switches keep getting missed-show alerts exactly as before.
+NOTIFY_KINDS = ("missed", "upcoming", "nothing")
 
-def _recipients(settings: dict) -> list[str]:
-    """Every configured alert recipient, de-duplicated, in field order."""
+
+def notify_key(slot: int, kind: str) -> str:
+    return f"alert_to{slot}_{kind}"
+
+
+def _recipients(settings: dict, kind: str | None = None) -> list[str]:
+    """Every configured alert recipient, de-duplicated, in field order.
+
+    With `kind`, only the recipients who have that kind of email switched on.
+    An address entered in two slots gets the email if either slot wants it.
+    """
     out, seen = [], set()
-    for key in _RECIPIENT_KEYS:
+    for slot, key in enumerate(_RECIPIENT_KEYS, start=1):
+        if kind and settings.get(notify_key(slot, kind)) == "0":
+            continue
         for addr in _RECIPIENT_SPLIT.split(settings.get(key) or ""):
             addr = addr.strip()
             if addr and addr.lower() not in seen:
@@ -341,6 +356,11 @@ def _process(app):
             )
             _alert_not_playing(settings, playlist)
 
+    try:
+        _process_upcoming(app, settings, status, now)
+    except Exception:
+        _logger.exception("Alert monitor: upcoming-reminder pass failed")
+
 
 def _alert_not_playing(settings: dict, playlist_name: str):
     now_str = datetime.now().strftime("%I:%M %p")
@@ -366,23 +386,26 @@ def _alert_fppd_down(settings: dict, playlist_name: str):
     )
 
 
-def _smtp_config(settings: dict):
+def _smtp_config(settings: dict, kind: str | None = None):
     return (
         (settings.get("alert_smtp_host") or "").strip(),
         _to_int(settings.get("alert_smtp_port"), 587, lo=1, hi=65535),
         (settings.get("alert_smtp_user") or "").strip(),
         (settings.get("alert_smtp_pass") or "").strip(),
         (settings.get("alert_email_from") or settings.get("alert_smtp_user") or "").strip(),
-        _recipients(settings),
+        _recipients(settings, kind),
     )
 
 
-def _send_email(settings: dict, subject: str, body: str):
-    host, port, user, password, from_addr, to_addrs = _smtp_config(settings)
+def _send_email(settings: dict, subject: str, body: str, kind: str = "missed") -> bool:
+    """Send to everyone who has `kind` switched on. True once the mail server
+    has taken it for at least one recipient, so callers can tell a reminder
+    that went out from one that must be tried again."""
+    host, port, user, password, from_addr, to_addrs = _smtp_config(settings, kind)
 
     if not all([host, user, password]) or not to_addrs:
-        _logger.warning("Alert monitor: email not configured — skipping alert")
-        return
+        _logger.warning("Alert monitor: email not configured, or no one wants '%s' emails — skipping", kind)
+        return False
 
     msg = MIMEText(body)
     msg["Subject"] = subject
@@ -408,13 +431,14 @@ def _send_email(settings: dict, subject: str, body: str):
                 _logger.error(
                     "Alert monitor: recipients refused: %s", ", ".join(sorted(refused))
                 )
-            return
+            return bool(delivered)
         except Exception as exc:
             last_error = exc
             _logger.warning("Alert monitor: email attempt %d/3 failed: %s", attempt + 1, exc)
             if attempt < 2:
                 time.sleep(10)
     _logger.error("Alert monitor: giving up on alert '%s': %s", subject, last_error)
+    return False
 
 
 def send_test_email(app) -> tuple[bool, str]:
@@ -452,6 +476,232 @@ def send_test_email(app) -> tuple[bool, str]:
     return True, ", ".join(to_addrs)
 
 
+# ── Upcoming-show reminders ──────────────────────────────────────────────────
+# Persisted in AppSetting (not module globals) so a restart can't resend a
+# reminder or forget how long a show has been quiet.
+_KEY_ACTIVE     = "upcoming_last_active"     # {playlist: ISO date it last played}
+_KEY_NOTIFIED   = "upcoming_notified"        # {playlist: {"date", "sent"}}
+_KEY_BASELINED  = "upcoming_baselined"       # "1" once the first-run seed is done
+_KEY_NOTHING    = "upcoming_nothing_sent"    # "1" while an empty-schedule warning is out
+
+# The schedule only changes when someone edits it, so there is no need to read
+# it every minute. Playing-status stamping is cheap and still runs every tick.
+_UPCOMING_EVERY = 600
+_upcoming_checked = 0.0
+
+
+def _state_get(app, key, default):
+    import json
+    with app.app_context():
+        from app import db
+        from app.models import AppSetting
+        row = db.session.get(AppSetting, key)
+        if row is None or not row.value:
+            return default
+        try:
+            return json.loads(row.value)
+        except ValueError:
+            return default
+
+
+def _state_set(app, key, value):
+    import json
+    with app.app_context():
+        from app import db
+        from app.models import AppSetting
+        text = None if value is None else json.dumps(value)
+        row = db.session.get(AppSetting, key)
+        if row is None:
+            db.session.add(AppSetting(key=key, value=text))
+        else:
+            row.value = text
+        db.session.commit()
+
+
+def _fetch_fppd_schedule(app):
+    """fppd's resolved schedule block, or None if it can't be read."""
+    try:
+        resp = requests.get(_fpp(app, "/fppd/schedule"), timeout=5)
+        resp.raise_for_status()
+        sched = resp.json().get("schedule")
+        return sched if isinstance(sched, dict) else None
+    except Exception as exc:
+        _logger.debug("Alert monitor: cannot read fppd schedule: %s", exc)
+        return None
+
+
+def _file_names(app, paths):
+    """Union of the file names FPP lists at `paths`, or None if any listing
+    fails. None means "unknown", which skips that check — better than telling
+    someone a file is missing because we couldn't ask."""
+    names = set()
+    for path in paths:
+        try:
+            resp = requests.get(_fpp(app, path), timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            return None
+        rows = data.get("files", []) if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            n = row.get("name") if isinstance(row, dict) else row
+            if isinstance(n, str):
+                names.add(n)
+                if n.lower().endswith(".fseq"):
+                    names.add(n[:-5])
+    return names
+
+
+def _preflight_all(app, due):
+    """{playlist: [problems]} for every show about to be announced."""
+    from urllib.parse import quote
+    from app.upcoming import preflight
+
+    def load(name):
+        try:
+            resp = requests.get(_fpp(app, f"/playlist/{quote(name, safe='')}"), timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    sequences = _file_names(app, ["/sequence"])
+    media = _file_names(app, ["/files/music", "/files/video"])
+    out = {}
+    for d in due:
+        try:
+            out[d["name"]] = preflight(d["name"], load, sequences, media)
+        except Exception:
+            _logger.exception("Alert monitor: pre-flight check failed for '%s'", d["name"])
+            out[d["name"]] = []  # a broken check must not hide the reminder
+    return out
+
+
+def _build_reminder_email(app, sched, starts, due, now):
+    from app.upcoming import build_agenda, build_reminder, run_summary
+    distance = _to_int(sched.get("scheduleDistance"), 28, lo=1, hi=366)
+    summaries = {d["name"]: run_summary(starts, d["name"], d["start"], distance, now) for d in due}
+    days = min(distance, 28)  # what fppd has resolved, capped at the four weeks promised
+    return build_reminder(
+        due, _preflight_all(app, due), summaries, now,
+        agenda=build_agenda(starts, now, days), agenda_days=days,
+    )
+
+
+def _stamp_active(app, status, now):
+    """Remember today as the last day the playing playlist was active."""
+    if status is None:
+        return
+    current = ((status.get("scheduler") or {}).get("currentPlaylist") or {}).get("playlistName")
+    current = (current or (status.get("current_playlist") or {}).get("playlist") or "").strip()
+    playing = str(status.get("status_name", "")).lower() == "playing" or status.get("status") == 1
+    if not current or not playing:
+        return
+    today = datetime.fromtimestamp(now).date().isoformat()
+    active = _state_get(app, _KEY_ACTIVE, {})
+    if active.get(current) != today:
+        active[current] = today
+        _state_set(app, _KEY_ACTIVE, active)
+
+
+def _process_upcoming(app, settings, status, now):
+    """Send the "plays soon" digest and the nothing-scheduled warning.
+
+    Runs inside the monitor loop. Every state change is written only after the
+    email it describes was accepted, so a failed send is simply retried.
+    """
+    global _upcoming_checked
+    from app import upcoming as up
+
+    if settings.get("upcoming_enabled") != "1":
+        return
+
+    _stamp_active(app, status, now)
+
+    if now - _upcoming_checked < _UPCOMING_EVERY:
+        return
+    _upcoming_checked = now
+
+    lead  = _to_int(settings.get("upcoming_lead_days"), up.DEFAULT_LEAD_DAYS, lo=1, hi=14)
+    gap   = _to_int(settings.get("upcoming_gap_days"), up.DEFAULT_GAP_DAYS, lo=1, hi=365)
+    hour  = _to_int(settings.get("upcoming_send_hour"), up.DEFAULT_SEND_HOUR, lo=0, hi=23)
+    empty = _to_int(settings.get("upcoming_empty_warn_days"), 0, lo=0, hi=28)
+
+    sched = _fetch_fppd_schedule(app)
+    if sched is None:
+        return  # fppd down: the missed-show alert owns that problem
+    starts = up.playlist_starts(sched)
+
+    # First run: learn what is already in motion without emailing about it.
+    if not _state_get(app, _KEY_BASELINED, None):
+        active_seed, notified_seed = up.baseline(starts, now, lead)
+        active = _state_get(app, _KEY_ACTIVE, {})
+        active.update(active_seed)
+        _state_set(app, _KEY_ACTIVE, active)
+        _state_set(app, _KEY_NOTIFIED, notified_seed)
+        _state_set(app, _KEY_BASELINED, "1")
+        _logger.info("Alert monitor: reminder baseline set for %d show(s)", len(notified_seed))
+        return
+
+    if datetime.fromtimestamp(now).hour < hour:
+        return  # before the send hour; the next pass (10 min) will catch it
+
+    notified = up.prune(_state_get(app, _KEY_NOTIFIED, {}), now)
+    due = up.due_reminders(
+        starts, now, lead_days=lead, gap_days=gap,
+        last_active=_state_get(app, _KEY_ACTIVE, {}), notified=notified,
+    )
+    if due:
+        if not _recipients(settings, "upcoming"):
+            _logger.debug("Alert monitor: reminders due but no one has them switched on")
+        else:
+            subject, body = _build_reminder_email(app, sched, starts, due, now)
+            if _send_email(settings, subject, body, kind="upcoming"):
+                _state_set(app, _KEY_NOTIFIED, up.mark_notified(notified, due, now))
+                _logger.info("Alert monitor: sent reminder for %s", ", ".join(d["name"] for d in due))
+                return  # keep the empty-schedule check for a later pass
+
+    if empty and sched.get("enabled", 1) != 0:
+        distance = _to_int(sched.get("scheduleDistance"), 28, lo=1, hi=366)
+        days = min(empty, distance)
+        cutoff = now + days * 86400
+        anything = any(now < s["start"] <= cutoff for s in starts)
+        sent = bool(_state_get(app, _KEY_NOTHING, None))
+        if anything and sent:
+            _state_set(app, _KEY_NOTHING, None)
+        elif not anything and not sent and _recipients(settings, "nothing"):
+            subject, body = up.build_nothing_scheduled(days)
+            if _send_email(settings, subject, body, kind="nothing"):
+                _state_set(app, _KEY_NOTHING, "1")
+
+
+def send_test_reminder(app) -> tuple[bool, str]:
+    """Send a sample reminder using the real next show, so the format and the
+    pre-flight check can be seen without waiting for a gap. Changes no state."""
+    from app import upcoming as up
+    settings = _load_settings(app)
+    host, _p, user, password, _f, to_addrs = _smtp_config(settings, "upcoming")
+    if not all([host, user, password]):
+        return False, "Email not fully configured — fill in the SMTP fields and save first."
+    if not to_addrs:
+        return False, "No recipient has upcoming-show reminders switched on."
+
+    now = time.time()
+    sched = _fetch_fppd_schedule(app)
+    starts = up.playlist_starts(sched) if sched else []
+    nxt = next((s for s in starts if s["start"] > now), None)
+    if sched is None or nxt is None:
+        return False, "No upcoming show found in the schedule to build a sample from."
+
+    due = [{**nxt, "kind": "new", "previous": None}]
+    subject, body = _build_reminder_email(app, sched, starts, due, now)
+    if not _send_email(settings, "[TEST] " + subject, body, kind="upcoming"):
+        return False, "The mail server did not accept the message — see the log."
+    return True, ", ".join(to_addrs)
+
+
 def monitor_state(app) -> dict:
     """What the monitor is watching right now — surfaced on the settings page
     so "is this thing actually armed?" is answerable without reading the log."""
@@ -467,6 +717,8 @@ def monitor_state(app) -> dict:
     state = {
         "enabled": settings.get("alert_enabled") == "1",
         "recipients": _recipients(settings),
+        "recipients_by_kind": {k: _recipients(settings, k) for k in NOTIFY_KINDS},
+        "upcoming_enabled": settings.get("upcoming_enabled") == "1",
         "fppd_reachable": fppd_ok,
         "last_poll": datetime.fromtimestamp(last).strftime("%I:%M %p") if last else None,
         "watching": None,
