@@ -52,6 +52,7 @@ class FakeFPP:
         self.schedule = []
         self.overlay_state = {}    # model -> {"State": n, "RGB": [...]}
         self.status = {"status_name": "idle", "current_playlist": {"playlist": ""}}
+        self.fppd_schedule = {"enabled": 1, "entries": [], "items": [], "scheduleDistance": 28}
         self.models = ["All"] + ["Zone %d" % i for i in range(1, 16)]
         # Real-controller quirk (see app/fpp_api.py): the first switch-on after a
         # "Stop Effects" command is acknowledged with 200 but ignored.
@@ -109,6 +110,8 @@ class FakeFPP:
             return _Response({"status": "OK"})
         if path == "/schedule/reload":
             return _Response({"status": "OK"})
+        if path == "/fppd/schedule":
+            return _Response({"schedule": self.fppd_schedule})
         if path == "/fppd/status":
             return _Response(self.status)
         if path == "/command":

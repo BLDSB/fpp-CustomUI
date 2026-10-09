@@ -368,6 +368,7 @@
     .preview-what { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
     .preview-meta { color: var(--text-dim); font-size: 0.78rem; }
     .preview-row.skipped .preview-what { color: #e74c3c; }
+    .preview-row.cut .preview-meta { color: #f1c40f; }
 
     /* ── Loop toggle pill ── */
     .toggle-pill {
@@ -776,11 +777,19 @@
                 html += `<div class="preview-day">${escHtml(dayLabel(ev.date))}</div>`;
             }
             if (ev.kind === 'playlist') {
-                const until = ev.endDate !== ev.date ? `${ev.end} (${dayLabel(ev.endDate).split(',')[0]})` : ev.end;
+                const sched = ev.endDate !== ev.date ? `${ev.end} (${dayLabel(ev.endDate).split(',')[0]})` : ev.end;
+                // A higher-priority entry that starts mid-run takes over, so the
+                // row ends there rather than at its scheduled end time.
+                const cut = !!ev.cutAt;
+                const until = cut
+                    ? (ev.cutDate !== ev.date ? `${ev.cutAt} (${dayLabel(ev.cutDate).split(',')[0]})` : ev.cutAt)
+                    : sched;
                 const meta = ev.skipped
-                    ? 'Skipped \u2014 lower priority than what is already running'
-                    : [ev.repeat ? 'Repeating' : 'Non-repeating', ev.stop && `${ev.stop} stop`].filter(Boolean).join(' \u00B7 ');
-                html += `<div class="preview-row${ev.skipped ? ' skipped' : ''}">
+                    ? `Skipped \u2014 ${ev.skippedBy ? ev.skippedBy + ' (higher or equal priority) is running' : 'lower priority than what is already running'}`
+                    : cut
+                        ? `Cut short by ${ev.cutBy} \u00B7 was scheduled until ${sched}`
+                        : [ev.repeat ? 'Repeating' : 'Non-repeating', ev.stop && `${ev.stop} stop`].filter(Boolean).join(' \u00B7 ');
+                html += `<div class="preview-row${ev.skipped ? ' skipped' : ''}${cut ? ' cut' : ''}">
                     <span class="preview-time">${escHtml(ev.start)} \u2013 ${escHtml(until)}</span>
                     <span class="preview-what">${escHtml(ev.name)}<div class="preview-meta">${escHtml(meta)}</div></span>
                 </div>`;

@@ -347,9 +347,29 @@ def schedule_preview():
         return jsonify({"error": fpp_error_text(exc)}), 502
 
     entries = {e.get("id"): e for e in sched.get("entries", [])}
-    running = []  # (end epoch, priority) for playlists that have started and not ended
+    return jsonify({
+        "enabled":  sched.get("enabled", 1) != 0,
+        "days":     sched.get("scheduleDistance", 28),
+        "extends":  bool(sched.get("schedulesExtendBeyondDistance")),
+        "events":   preview_events(sched.get("items", []), entries),
+    })
+
+
+def preview_events(items, entries):
+    """Turn fppd's resolved schedule items into the rows the preview shows.
+
+    fppd lists every start; it does not say which ones actually get to play.
+    Priority is the entry's position in the list (a lower number wins), and
+    only one playlist plays at a time:
+
+    * a start while something of equal or higher priority is running is
+      ``skipped`` (``skippedBy`` names what is running);
+    * a start while something of lower priority is running takes over, so the
+      running one is ``cutAt`` that moment (``cutBy`` names the newcomer).
+    """
+    playing = None   # {"end", "priority", "event"} for the playlist now running
     events = []
-    for item in sched.get("items", []):
+    for item in items:
         start = int(item.get("startTime", 0))
         start_dt = datetime.fromtimestamp(start)
         entry = entries.get(item.get("id"), {})
@@ -362,10 +382,19 @@ def schedule_preview():
         if item.get("command") == "Start Playlist":
             end = int(item.get("endTime", 0))
             priority = item.get("priority", 0)
-            running = [r for r in running if r[0] > start]
-            skipped = bool(running) and priority >= running[-1][1]
-            if not skipped:
-                running.append((end, priority))
+            if playing and playing["end"] <= start:
+                playing = None
+            skipped = bool(playing) and priority >= playing["priority"]
+            if skipped:
+                event["skippedBy"] = playing["event"]["name"]
+            else:
+                if playing:
+                    playing["event"].update({
+                        "cutAt":   _clock(start_dt),
+                        "cutDate": start_dt.strftime("%Y-%m-%d"),
+                        "cutBy":   event["name"],
+                    })
+                playing = {"end": end, "priority": priority, "event": event}
             event.update({
                 "kind":    "playlist",
                 "end":     _clock(datetime.fromtimestamp(end)),
@@ -380,10 +409,4 @@ def schedule_preview():
                 "name": " | ".join([str(item.get("command", ""))] + [str(a) for a in args]),
             })
         events.append(event)
-
-    return jsonify({
-        "enabled":  sched.get("enabled", 1) != 0,
-        "days":     sched.get("scheduleDistance", 28),
-        "extends":  bool(sched.get("schedulesExtendBeyondDistance")),
-        "events":   events,
-    })
+    return events
