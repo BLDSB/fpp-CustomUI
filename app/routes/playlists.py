@@ -1,23 +1,26 @@
-import requests
+import threading
+import time
 from urllib.parse import quote
+
+import requests
 from flask import Blueprint, current_app, jsonify, request
 
 from app.auth_utils import login_required
+from app.fpp_api import fpp_url
+
 # Shared so the overlay reset lives in one place. It never stops playback —
 # callers that need that call _stop_current() themselves.
 from app.routes.scenes import _reset_overlays
+from app.validation import json_object
 
 playlists_bp = Blueprint("playlists", __name__)
 
 
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
-
-
 def _stop_current():
     """Stop whatever FPP is currently playing."""
+    invalidate_status_cache()
     try:
-        requests.get(_fpp("/playlists/stop"), timeout=5)
+        requests.get(fpp_url("/playlists/stop"), timeout=5)
     except requests.RequestException:
         pass
 
@@ -27,7 +30,7 @@ def _stop_current():
 def list_playlists():
     """Return the playlist names known to FPP."""
     try:
-        resp = requests.get(_fpp("/playlists"), timeout=5)
+        resp = requests.get(fpp_url("/playlists"), timeout=5)
         resp.raise_for_status()
         data = resp.json()
         # FPP may return a bare list or {"playlists": [...]}
@@ -99,7 +102,7 @@ def playlists_with_audio():
                 data = None
         else:
             try:
-                resp = requests.get(_fpp(f"/playlist/{quote(name, safe='')}"), timeout=5)
+                resp = requests.get(fpp_url(f"/playlist/{quote(name, safe='')}"), timeout=5)
                 resp.raise_for_status()
                 data = resp.json()
             except (requests.RequestException, ValueError):
@@ -108,7 +111,7 @@ def playlists_with_audio():
         return data
 
     try:
-        resp = requests.get(_fpp("/playlists"), timeout=5)
+        resp = requests.get(fpp_url("/playlists"), timeout=5)
         resp.raise_for_status()
         raw = resp.json()
         names = raw if isinstance(raw, list) else raw.get("playlists", [])
@@ -175,14 +178,14 @@ def play_playlist(name):
     _reset_overlays()
 
     try:
-        data = request.get_json(silent=True) or {}
+        data = json_object()
         repeat = bool(data.get("repeat", True))
         repeat_str = "true" if repeat else "false"
         # Not /playlist/<name>/start/<repeat>: FPP 9.5.x decodes the name and
         # pastes it unencoded into an internal URL, so any name containing a
         # space fails there — silently, with an HTTP 200 and nothing playing.
         resp = requests.get(
-            _fpp(f"/command/Start%20Playlist/{quote(name, safe='')}/{repeat_str}/false"),
+            fpp_url(f"/command/Start%20Playlist/{quote(name, safe='')}/{repeat_str}/false"),
             timeout=5,
         )
         resp.raise_for_status()
@@ -221,7 +224,7 @@ def release_overlays():
 def list_sequences():
     """Return the sequence names known to FPP."""
     try:
-        resp = requests.get(_fpp("/sequence"), timeout=5)
+        resp = requests.get(fpp_url("/sequence"), timeout=5)
         resp.raise_for_status()
         data = resp.json()
         sequences = data if isinstance(data, list) else []
@@ -250,7 +253,7 @@ def play_sequence(name):
 
     _reset_overlays()
 
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     repeat = bool(data.get("repeat", True))
     seq_file = name if name.endswith(".fseq") else f"{name}.fseq"
 
@@ -279,7 +282,7 @@ def play_sequence(name):
     }
 
     try:
-        resp = requests.post(_fpp("/playlist/Current-Sequence"), json=playlist_def, timeout=5)
+        resp = requests.post(fpp_url("/playlist/Current-Sequence"), json=playlist_def, timeout=5)
         resp.raise_for_status()
     except requests.RequestException as exc:
         current_app.logger.error("Could not save temp sequence playlist: %s", exc)
@@ -287,7 +290,7 @@ def play_sequence(name):
 
     repeat_str = "true" if repeat else "false"
     try:
-        resp = requests.get(_fpp(f"/playlist/Current-Sequence/start/{repeat_str}"), timeout=5)
+        resp = requests.get(fpp_url(f"/playlist/Current-Sequence/start/{repeat_str}"), timeout=5)
         resp.raise_for_status()
         return jsonify({"ok": True})
     except requests.RequestException as exc:
@@ -295,14 +298,44 @@ def play_sequence(name):
         return jsonify({"error": "Could not start sequence"}), 502
 
 
+# Every open Controls page polls this every few seconds (the kiosk, plus any
+# phone on the hotspot). A short shared cache lets them all be answered by one
+# call to fppd instead of one each. Playback changes made through this app
+# clear it, so the page never shows the state from before its own click.
+_STATUS_TTL = 2.0
+_status_lock = threading.Lock()
+_status_cache = {"at": 0.0, "body": None}
+
+
+def invalidate_status_cache():
+    with _status_lock:
+        _status_cache["body"] = None
+
+
+@playlists_bp.after_request
+def _drop_stale_status(response):
+    # Any POST here (play, stop, start a sequence) changes what fppd reports.
+    if request.method == "POST":
+        invalidate_status_cache()
+    return response
+
+
 @playlists_bp.get("/api/fppd/status")
 @login_required
 def fpp_status():
-    """Proxy the FPP daemon status endpoint."""
-    try:
-        resp = requests.get(_fpp("/fppd/status"), timeout=5)
-        resp.raise_for_status()
-        return jsonify(resp.json())
-    except requests.RequestException as exc:
-        current_app.logger.error("FPP status error: %s", exc)
-        return jsonify({"error": "Could not reach the controller"}), 502
+    """Proxy the FPP daemon status endpoint (cached for a couple of seconds)."""
+    with _status_lock:
+        if _status_cache["body"] is not None and time.monotonic() - _status_cache["at"] < _STATUS_TTL:
+            return jsonify(_status_cache["body"])
+        # Held across the fetch on purpose: concurrent pollers wait for the one
+        # request in flight rather than each starting their own.
+        try:
+            resp = requests.get(fpp_url("/fppd/status"), timeout=5)
+            resp.raise_for_status()
+            body = resp.json()
+        except (requests.RequestException, ValueError) as exc:
+            current_app.logger.error("FPP status error: %s", exc)
+            return jsonify({"error": "Could not reach the controller"}), 502
+        _status_cache["at"] = time.monotonic()
+        _status_cache["body"] = body
+    return jsonify(body)

@@ -1,28 +1,20 @@
-import hmac
 import re
 
 import requests
 from flask import Blueprint, current_app, jsonify, request
 
 from app import db
-from app.auth_utils import login_required
+from app.auth_utils import internal_token_error, login_required
+from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb, playlist_url
 from app.fpp_playlist import build_playlist_def, scene_entries
 from app.models import (
     OVERLAY_MODELS, Scene, SceneZone, all_overlay_models, expand_overlay_models,
 )
+from app.validation import json_object, page_args, str_field
 
 scenes_bp = Blueprint("scenes", __name__)
 
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
-
-
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
-
-
-def _hex_to_rgb(hex_color):
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
 def _playlist_name(scene_name):
@@ -43,7 +35,7 @@ def _write_scene_files(scene):
     )
     try:
         requests.post(
-            _fpp(f"/playlist/{_playlist_name(scene.name)}"),
+            playlist_url(_playlist_name(scene.name)),
             json=playlist_def,
             timeout=5,
         ).raise_for_status()
@@ -53,7 +45,7 @@ def _write_scene_files(scene):
 
 def _delete_scene_files(scene):
     try:
-        requests.delete(_fpp(f"/playlist/{_playlist_name(scene.name)}"), timeout=5)
+        requests.delete(playlist_url(_playlist_name(scene.name)), timeout=5)
     except requests.RequestException:
         pass
 
@@ -66,7 +58,7 @@ def _reset_overlays():
     """
     try:
         requests.post(
-            _fpp("/command"),
+            fpp_url("/command"),
             json={
                 "command": "Overlay Model Effect",
                 "multisyncCommand": False,
@@ -82,48 +74,60 @@ def _reset_overlays():
     mark_overlays_cleared()
     for model in sorted(all_overlay_models()):
         try:
-            requests.put(_fpp(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
+            requests.put(fpp_url(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
         except requests.RequestException:
             pass
+
+
+def _put_zone_on(target, rgb):
+    """Switch one overlay model on and fill it with ``rgb``."""
+    requests.put(
+        fpp_url(f"/overlays/model/{target}/state"), json={"State": 1}, timeout=5,
+    ).raise_for_status()
+    requests.put(
+        fpp_url(f"/overlays/model/{target}/fill"), json={"RGB": list(rgb)}, timeout=5,
+    ).raise_for_status()
 
 
 def _set_scene_colors(scene):
     """Enable overlay models and fill colors for each zone. Does not stop playback."""
     errors = []
+    colors = {}   # overlay model -> rgb, for the read-back below
     for zone in scene.zones:
         try:
-            r, g, b = _hex_to_rgb(zone.hex_color)
+            rgb = hex_to_rgb(zone.hex_color)
         except (ValueError, IndexError, TypeError):
-            # Corrupt stored color (e.g. bad restore) — skip this zone rather
+            # Corrupt stored color (e.g. bad restore) - skip this zone rather
             # than aborting the whole scene with a 500.
             current_app.logger.error(
-                "Scene %d has invalid color %r for %s — skipping zone",
+                "Scene %d has invalid color %r for %s - skipping zone",
                 scene.id, zone.hex_color, zone.fpp_model,
             )
             errors.append(zone.fpp_model)
             continue
         try:
             for target in expand_overlay_models([zone.fpp_model]):
-                requests.put(
-                    _fpp(f"/overlays/model/{target}/state"),
-                    json={"State": 1},
-                    timeout=5,
-                ).raise_for_status()
-                requests.put(
-                    _fpp(f"/overlays/model/{target}/fill"),
-                    json={"RGB": [r, g, b]},
-                    timeout=5,
-                ).raise_for_status()
+                _put_zone_on(target, rgb)
+                colors[target] = rgb
         except requests.RequestException as exc:
             current_app.logger.error("Scene %d apply error for %s: %s", scene.id, zone.fpp_model, exc)
             errors.append(zone.fpp_model)
+
+    def reactivate(models):
+        for target in models:
+            try:
+                _put_zone_on(target, colors[target])
+            except requests.RequestException as exc:
+                current_app.logger.error("Scene %d re-apply error for %s: %s", scene.id, target, exc)
+
+    errors += ensure_models_active(list(colors), reactivate)
     return len(errors) == 0, errors
 
 
 def _apply_scene(scene):
     """Stop playback, clear all overlays, then set each zone stored in the scene."""
     try:
-        requests.get(_fpp("/playlists/stop"), timeout=5)
+        requests.get(fpp_url("/playlists/stop"), timeout=5)
     except requests.RequestException:
         pass
 
@@ -135,14 +139,16 @@ def _apply_scene(scene):
 @scenes_bp.get("/api/scenes")
 @login_required
 def list_scenes():
-    return jsonify([s.to_dict() for s in Scene.query.order_by(Scene.id).all()])
+    limit, offset = page_args()
+    rows = Scene.query.order_by(Scene.id).limit(limit).offset(offset).all()
+    return jsonify([s.to_dict() for s in rows])
 
 
 @scenes_bp.post("/api/scenes")
 @login_required
 def create_scene():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    name = str_field(data, "name")
     zones = data.get("zones", {})
 
     if not name or len(name) > 64:
@@ -211,13 +217,9 @@ def internal_apply_scene(scene_id):
     built playlists so one item's colors do not bleed into the next); without it
     the scene only touches the zones it names, as it always has.
     """
-    token = request.args.get("token", "")
-    internal_token = current_app.config.get("INTERNAL_TOKEN", "")
-
-    if not internal_token:
-        return jsonify({"error": "Internal token not configured"}), 503
-    if not hmac.compare_digest(token, internal_token):
-        return jsonify({"error": "Forbidden"}), 403
+    denied = internal_token_error()
+    if denied:
+        return denied
 
     scene = db.session.get(Scene, scene_id)
     if not scene:

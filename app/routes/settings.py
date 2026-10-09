@@ -10,14 +10,17 @@ import time
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, url_for
 
 from app import db
+from app import uploads
 from app.auth_utils import login_required
 from app.models import (
     MAX_ZONES, OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
     EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, ZoneMember,
-    all_is_virtual, get_all_zones, is_managed_overlay,
+    all_is_virtual, get_all_zones, is_managed_overlay, ref_name_lookups,
 )
 from app import overlay_layout
 from app import ui_path as ui_path_mod
+from app.security import rate_limited
+from app.validation import json_object
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -76,7 +79,7 @@ def settings_page():
 @settings_bp.post("/api/settings")
 @login_required
 def save_settings():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     for key, raw_value in data.items():
         if key not in _ALLOWED_KEYS:
             continue
@@ -140,11 +143,12 @@ def save_settings():
 
 
 _ALLOWED_IMAGE_TYPES = {"logo", "bg"}
-_ALLOWED_IMAGE_EXTS  = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+_ALLOWED_IMAGE_EXTS  = uploads.ALLOWED_EXTS
 
 
 @settings_bp.post("/api/upload/image")
 @login_required
+@rate_limited(20, 60)
 def upload_image():
     image_type = request.args.get("type", "")
     if image_type not in _ALLOWED_IMAGE_TYPES:
@@ -158,6 +162,13 @@ def upload_image():
     if ext not in _ALLOWED_IMAGE_EXTS:
         return jsonify({"error": f"Unsupported file type. Use: {', '.join(sorted(_ALLOWED_IMAGE_EXTS))}"}), 400
 
+    # Read at most one byte past the limit so an oversized upload is rejected
+    # without buffering all of it.
+    data = file.stream.read(uploads.MAX_IMAGE_BYTES + 1)
+    problem = uploads.image_problem(file.filename, data)
+    if problem:
+        return jsonify({"error": problem}), 400
+
     upload_dir = os.path.join(current_app.static_folder, "uploads")
     filename = f"{image_type}{ext}"
     try:
@@ -165,7 +176,8 @@ def upload_image():
         # Remove any previous upload for this slot (different extension)
         for old in glob.glob(os.path.join(upload_dir, f"{image_type}.*")):
             os.remove(old)
-        file.save(os.path.join(upload_dir, filename))
+        with open(os.path.join(upload_dir, filename), "wb") as out:
+            out.write(data)
     except OSError as exc:
         current_app.logger.error("Image upload failed: %s", exc)
         return jsonify({"error": "Could not save image — disk full or uploads folder not writable?"}), 500
@@ -197,6 +209,8 @@ def save_zones():
     existing = {z.slot: z for z in Zone.query.all()}
 
     for item in data:
+        if not isinstance(item, dict):
+            continue
         slot = item.get("slot")
         if not isinstance(slot, int) or slot < 0 or slot > MAX_ZONES:
             continue
@@ -386,27 +400,12 @@ def layout_preview():
     return jsonify({"models": out, "map_path": DISPLAY_MAP_PATH, "mixed_channels": mixed})
 
 
-@settings_bp.post("/api/fpp/layout/import")
-@login_required
-def layout_import():
-    """Store the confirmed geometry as ZoneLayout rows.
+def _stage_layout_items(items, derived):
+    """Validate the import dialog's items into ``(slot, source_name, grid, label)``.
 
-    Each item is either {slot, source_name} — re-derived from the display map —
-    or {slot, data, start_channel} for a layout pasted from an xLights custom
-    model, the escape hatch for nodes that do not sit on a regular lattice.
+    Returns ``(staged, error_response)``; ``error_response`` is a ready-made
+    ``(json, status)`` pair when any item is invalid, else ``None``.
     """
-    body = request.get_json(silent=True) or {}
-    items = body.get("models")
-    if not isinstance(items, list) or not items:
-        return jsonify({"error": "No models selected"}), 400
-
-    derived = {}
-    if any(not item.get("data") for item in items if isinstance(item, dict)):
-        entries, err = _derive_from_map()
-        if err:
-            return err
-        derived = {name: grid for _slot, name, grid in entries}
-
     staged = []
     for item in items:
         if not isinstance(item, dict):
@@ -425,19 +424,83 @@ def layout_import():
                     int(item.get("channels_per_node") or 3),
                 )
             except (ValueError, TypeError) as exc:
-                return jsonify({"error": f"Zone {slot}: {exc}"}), 400
+                return None, (jsonify({"error": f"Zone {slot}: {exc}"}), 400)
         else:
             grid = derived.get(source_name)
             if grid is None:
-                return jsonify({
+                return None, (jsonify({
                     "error": f"Zone {slot}: '{source_name}' is not in the display map."
-                }), 400
+                }), 400)
 
         err = overlay_layout.validate_grid(grid, f"Zone {slot}")
         if err:
-            return jsonify({"error": err}), 400
+            return None, (jsonify({"error": err}), 400)
         staged.append((slot, source_name, grid, group_label))
+    return staged, None
 
+
+def _store_single_layout(slot, source_name, grid, now):
+    """Write one model as the zone's ZoneLayout row (clearing any members)."""
+    ZoneMember.query.filter_by(slot=slot).delete()
+    layout = db.session.get(ZoneLayout, slot)
+    if layout is None:
+        layout = ZoneLayout(slot=slot)
+        db.session.add(layout)
+    layout.source_name = source_name
+    layout.width = grid["width"]
+    layout.height = grid["height"]
+    layout.node_count = grid["placed"]
+    layout.start_channel = grid["start_channel"]
+    layout.channel_count = grid["channel_count"]
+    layout.channels_per_node = grid["channels_per_node"]
+    layout.data = grid["data"]
+    layout.imported_at = now
+
+
+def _store_zone_members(slot, group, now):
+    """Write several models as the zone's ZoneMember rows (clearing its layout)."""
+    ZoneLayout.query.filter_by(slot=slot).delete()
+    ZoneMember.query.filter_by(slot=slot).delete()
+    for position, (_, source_name, grid, _label) in enumerate(group, start=1):
+        db.session.add(ZoneMember(
+            slot=slot,
+            position=position,
+            source_name=source_name,
+            width=grid["width"],
+            height=grid["height"],
+            node_count=grid["placed"],
+            start_channel=grid["start_channel"],
+            channel_count=grid["channel_count"],
+            channels_per_node=grid["channels_per_node"],
+            data=grid["data"],
+            imported_at=now,
+        ))
+
+
+@settings_bp.post("/api/fpp/layout/import")
+@login_required
+def layout_import():
+    """Store the confirmed geometry as ZoneLayout rows.
+
+    Each item is either {slot, source_name} — re-derived from the display map —
+    or {slot, data, start_channel} for a layout pasted from an xLights custom
+    model, the escape hatch for nodes that do not sit on a regular lattice.
+    """
+    body = json_object()
+    items = body.get("models")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "No models selected"}), 400
+
+    derived = {}
+    if any(not item.get("data") for item in items if isinstance(item, dict)):
+        entries, err = _derive_from_map()
+        if err:
+            return err
+        derived = {name: grid for _slot, name, grid in entries}
+
+    staged, err = _stage_layout_items(items, derived)
+    if err:
+        return err
     if not staged:
         return jsonify({"error": "No valid models to import"}), 400
 
@@ -464,38 +527,10 @@ def layout_import():
         # re-import never leaves both behind.
         if len(group) == 1 or slot == 0:
             group = group[:1]
-            ZoneMember.query.filter_by(slot=slot).delete()
             _, source_name, grid, _label = group[0]
-            layout = db.session.get(ZoneLayout, slot)
-            if layout is None:
-                layout = ZoneLayout(slot=slot)
-                db.session.add(layout)
-            layout.source_name = source_name
-            layout.width = grid["width"]
-            layout.height = grid["height"]
-            layout.node_count = grid["placed"]
-            layout.start_channel = grid["start_channel"]
-            layout.channel_count = grid["channel_count"]
-            layout.channels_per_node = grid["channels_per_node"]
-            layout.data = grid["data"]
-            layout.imported_at = now
+            _store_single_layout(slot, source_name, grid, now)
         else:
-            ZoneLayout.query.filter_by(slot=slot).delete()
-            ZoneMember.query.filter_by(slot=slot).delete()
-            for position, (_, source_name, grid, _label) in enumerate(group, start=1):
-                db.session.add(ZoneMember(
-                    slot=slot,
-                    position=position,
-                    source_name=source_name,
-                    width=grid["width"],
-                    height=grid["height"],
-                    node_count=grid["placed"],
-                    start_channel=grid["start_channel"],
-                    channel_count=grid["channel_count"],
-                    channels_per_node=grid["channels_per_node"],
-                    data=grid["data"],
-                    imported_at=now,
-                ))
+            _store_zone_members(slot, group, now)
 
         first_name = group[0][1]
         label = next((g[3] for g in group if g[3]), "") or first_name
@@ -528,22 +563,87 @@ def layout_clear():
     return jsonify({"ok": True})
 
 
-@settings_bp.post("/api/fpp/create-overlay-models")
-@login_required
-def create_overlay_models():
-    config_path = OVERLAY_CONFIG_PATH
+_STUB_ZONE_MODEL = {
+    "Type": "Channel",
+    "StartChannel": 1,
+    "ChannelCount": 3,
+    "ChannelCountPerNode": 3,
+    "StringCount": 1,
+    "StrandsPerString": 1,
+    "Orientation": "horizontal",
+    "StartCorner": "TL",
+    "xLights": False,
+}
 
+
+def _load_overlay_config(config_path):
+    """Read FPP's model-overlays.json, or a fresh skeleton if absent/unreadable."""
     try:
         if os.path.exists(config_path):
             with open(config_path) as f:
-                existing = json.load(f)
-        else:
-            existing = {"models": [], "autoCreate": True}
+                return json.load(f)
     except Exception as exc:
         current_app.logger.warning(
             "model-overlays.json unreadable (%s) — rebuilding zone models from scratch", exc
         )
-        existing = {"models": [], "autoCreate": True}
+    return {"models": [], "autoCreate": True}
+
+
+def _zone_overlay_models(slot, name, layout, members, prior, kept):
+    """FPP model dict(s) for one zone slot, in the order they should be written."""
+    if slot in members:
+        # A grouped zone is driven through its member models; "Zone N"
+        # itself is not written, and is never targeted.
+        models = []
+        for member in members[slot]:
+            grid = member.to_grid()
+            err = overlay_layout.validate_grid(grid, member.fpp_model_name)
+            if err:
+                current_app.logger.error("Skipping %s: %s", member.fpp_model_name, err)
+            else:
+                models.append(overlay_layout.to_fpp_model(member.fpp_model_name, grid))
+        return models
+    if layout is not None:
+        grid = layout.to_grid()
+        err = overlay_layout.validate_grid(grid, name)
+        if err:
+            current_app.logger.error("Skipping %s: %s", name, err)
+        else:
+            return [overlay_layout.to_fpp_model(name, grid)]
+    if name in prior:
+        # No layout — keep the operator's channel data exactly as it is
+        # rather than resetting it to a stub.
+        return [prior[name]]
+    if slot == 0:
+        whole = _whole_display_model(kept)
+        return [whole] if whole is not None else []
+    return [{"Name": name, **_STUB_ZONE_MODEL}]
+
+
+def _write_overlay_config_atomic(config_path, config):
+    """Atomic write so a crash mid-write can't corrupt FPP's own model config."""
+    tmp_path = config_path + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(config, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+@settings_bp.post("/api/fpp/create-overlay-models")
+@login_required
+@rate_limited(10, 60)
+def create_overlay_models():
+    """Rebuild the app-managed zone models in FPP's model-overlays.json and restart fppd."""
+    config_path = OVERLAY_CONFIG_PATH
+    existing = _load_overlay_config(config_path)
 
     prior = {
         m.get("Name"): m
@@ -564,68 +664,18 @@ def create_overlay_models():
     rebuilt = []
     virtual_all = all_is_virtual()
     for slot in range(0, MAX_ZONES + 1):
-        name = "All" if slot == 0 else f"Zone {slot}"
         if slot == 0 and virtual_all:
             # No correct whole-display model exists for this show; the app
             # drives "All" through the zones, so none is written.
             continue
-        if slot in members:
-            # A grouped zone is driven through its member models; "Zone N"
-            # itself is not written, and is never targeted.
-            for member in members[slot]:
-                grid = member.to_grid()
-                err = overlay_layout.validate_grid(grid, member.fpp_model_name)
-                if err:
-                    current_app.logger.error("Skipping %s: %s", member.fpp_model_name, err)
-                else:
-                    rebuilt.append(overlay_layout.to_fpp_model(member.fpp_model_name, grid))
-            continue
-        layout = layouts.get(slot)
-        if layout is not None:
-            grid = layout.to_grid()
-            err = overlay_layout.validate_grid(grid, name)
-            if err:
-                current_app.logger.error("Skipping %s: %s", name, err)
-            else:
-                rebuilt.append(overlay_layout.to_fpp_model(name, grid))
-                continue
-        if name in prior:
-            # No layout — keep the operator's channel data exactly as it is
-            # rather than resetting it to a stub.
-            rebuilt.append(prior[name])
-        elif slot == 0:
-            whole = _whole_display_model(kept)
-            if whole is not None:
-                rebuilt.append(whole)
-        else:
-            rebuilt.append({
-                "Name": name,
-                "Type": "Channel",
-                "StartChannel": 1,
-                "ChannelCount": 3,
-                "ChannelCountPerNode": 3,
-                "StringCount": 1,
-                "StrandsPerString": 1,
-                "Orientation": "horizontal",
-                "StartCorner": "TL",
-                "xLights": False,
-            })
+        name = "All" if slot == 0 else f"Zone {slot}"
+        rebuilt.extend(_zone_overlay_models(slot, name, layouts.get(slot), members, prior, kept))
 
     existing["models"] = kept + rebuilt
 
-    # Atomic write so a crash mid-write can't corrupt FPP's own model config.
-    tmp_path = config_path + ".tmp"
     try:
-        with open(tmp_path, "w") as f:
-            json.dump(existing, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, config_path)
+        _write_overlay_config_atomic(config_path, existing)
     except Exception as exc:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
         current_app.logger.error("Could not write model-overlays.json: %s", exc)
         return jsonify({"error": f"Could not write config: {exc}"}), 500
 
@@ -707,6 +757,7 @@ def trigger_reboot(delay=2, reason="the settings page"):
 
 @settings_bp.post("/api/system/reboot")
 @login_required
+@rate_limited(3, 60)
 def system_reboot():
     error = trigger_reboot()
     if error:
@@ -722,6 +773,7 @@ def build_ui_payload():
     Shared with the full-archive builder in app/fpp_backup.py, which embeds
     the same document at ui/backup.json so one restore path handles both.
     """
+    lookups = ref_name_lookups()
     return {
         "version": 4,
         "exported_at": datetime.datetime.utcnow().isoformat() + "Z",
@@ -749,7 +801,7 @@ def build_ui_payload():
         "scenes": [s.to_dict() for s in Scene.query.all()],
         "effect_presets": [p.to_dict() for p in EffectPreset.query.order_by(EffectPreset.id).all()],
         "custom_playlists": [
-            c.to_dict() for c in CustomPlaylist.query.order_by(CustomPlaylist.id).all()
+            c.to_dict(lookups) for c in CustomPlaylist.query.order_by(CustomPlaylist.id).all()
         ],
     }
 
@@ -765,17 +817,8 @@ def download_backup():
     )
 
 
-def apply_ui_backup(data):
-    """Restore this plugin's database from a version-4 payload.
-
-    Returns None on success or an error string; the whole thing is one
-    transaction, so a failure at commit leaves the database untouched.
-    Shared with the full-archive restore in app/routes/backup.py.
-    """
-    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3, 4):
-        return "Unsupported backup version"
-
-    # Settings — merge (update existing keys, add new ones)
+def _restore_settings(data):
+    """Merge saved settings: update existing keys, add new ones."""
     for key, value in (data.get("settings") or {}).items():
         if key not in _ALLOWED_KEYS:
             continue
@@ -787,7 +830,9 @@ def apply_ui_backup(data):
         else:
             db.session.add(AppSetting(key=key, value=value))
 
-    # Zones — update matching slots
+
+def _restore_zones(data):
+    """Update matching zone slots (name, hidden), adding any that are missing."""
     existing_zones = {z.slot: z for z in Zone.query.all()}
     for item in (data.get("zones") or []):
         slot = item.get("slot")
@@ -802,7 +847,9 @@ def apply_ui_backup(data):
         else:
             db.session.add(Zone(slot=slot, display_name=name or ("All" if slot == 0 else f"Zone {slot}"), hidden=hidden))
 
-    # Zone layouts — replace entirely when the backup carries them
+
+def _restore_zone_layouts(data):
+    """Replace every ZoneLayout row, skipping malformed or invalid ones."""
     if isinstance(data.get("zone_layouts"), list):
         ZoneLayout.query.delete()
         db.session.flush()
@@ -835,7 +882,9 @@ def apply_ui_backup(data):
                 continue
             db.session.add(layout)
 
-    # Grouped-zone members — replace entirely when the backup carries them
+
+def _restore_zone_members(data):
+    """Replace every ZoneMember row, skipping malformed or invalid ones."""
     if isinstance(data.get("zone_members"), list):
         ZoneMember.query.delete()
         db.session.flush()
@@ -869,7 +918,9 @@ def apply_ui_backup(data):
                 continue
             db.session.add(member)
 
-    # Saved colors + buttons — replace entirely
+
+def _restore_colors(data):
+    """Replace saved colors and their buttons, remapping color ids."""
     ColorButton.query.delete()
     SavedColor.query.delete()
     db.session.flush()
@@ -892,13 +943,14 @@ def apply_ui_backup(data):
         if new_sid:
             db.session.add(ColorButton(label=str(b.get("label", ""))[:64], saved_color_id=new_sid))
 
-    # Scenes — replace entirely and regenerate FPP playlists
+
+def _restore_scenes(data):
+    """Replace all scenes and regenerate their FPP playlists."""
     Scene.query.delete()
     db.session.flush()
 
-    from app.routes.custom_playlists import _write_custom_playlist
-    from app.routes.effects import _write_effect_playlist
     from app.routes.scenes import _write_scene_files
+
     seen_scene_names = set()
     for s in (data.get("scenes") or []):
         if not isinstance(s, dict):
@@ -936,7 +988,11 @@ def apply_ui_backup(data):
         except Exception as exc:
             current_app.logger.warning("Could not write scene playlist for '%s': %s", name, exc)
 
-    # Effect presets — replace entirely
+
+def _restore_effect_presets(data):
+    """Replace all effect presets and regenerate their FPP playlists."""
+    from app.routes.effects import _write_effect_playlist
+
     EffectPreset.query.delete()
     db.session.flush()
 
@@ -963,8 +1019,13 @@ def apply_ui_backup(data):
         except Exception as exc:
             current_app.logger.warning("Could not write effect playlist for '%s': %s", name, exc)
 
-    # Custom playlists — replace entirely. Items are rebuilt by name lookup
-    # because scene and preset ids are reassigned by the wipe-and-recreate above.
+
+def _restore_custom_playlists(data):
+    """Replace all custom playlists, rebuilding items by name lookup."""
+    from app.routes.custom_playlists import _write_custom_playlist
+
+    # Items are rebuilt by name lookup because scene and preset ids are
+    # reassigned by the wipe-and-recreate above.
     scenes_by_name = {s.name: s.id for s in Scene.query.all()}
     presets_by_name = {p.name: p.id for p in EffectPreset.query.all()}
 
@@ -1026,6 +1087,26 @@ def apply_ui_backup(data):
         except Exception as exc:
             current_app.logger.warning("Could not write custom playlist '%s': %s", name, exc)
 
+
+def apply_ui_backup(data):
+    """Restore this plugin's database from a version-4 payload.
+
+    Returns None on success or an error string; the whole thing is one
+    transaction, so a failure at commit leaves the database untouched.
+    Shared with the full-archive restore in app/routes/backup.py.
+    """
+    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3, 4):
+        return "Unsupported backup version"
+
+    _restore_settings(data)
+    _restore_zones(data)
+    _restore_zone_layouts(data)
+    _restore_zone_members(data)
+    _restore_colors(data)
+    _restore_scenes(data)
+    _restore_effect_presets(data)
+    _restore_custom_playlists(data)
+
     try:
         db.session.commit()
     except Exception as exc:
@@ -1075,7 +1156,7 @@ def set_ui_path():
     Apache is reloaded gracefully, so this response still reaches the browser
     over the old path; the client then navigates to the returned URL.
     """
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     name = str(data.get("ui_path") or "").strip()
 
     if name == ui_path_mod.current_path():

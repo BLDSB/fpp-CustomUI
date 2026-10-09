@@ -1,18 +1,16 @@
 import requests
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_api import fpp_error_text, fpp_url
 from app.models import AppSetting
+from app.validation import json_object
 
 main = Blueprint("main", __name__)
 
 _BRIGHTNESS_DESCRIPTION = "Global Brightness"
 _BRIGHTNESS_COUNT = 524288  # covers all practical channel counts
-
-
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
 
 
 @main.route("/")
@@ -53,7 +51,7 @@ def get_brightness():
 @main.post("/api/brightness")
 @login_required
 def set_brightness():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     try:
         value = int(data.get("brightness", 100))
         if not 0 <= value <= 100:
@@ -65,7 +63,7 @@ def set_brightness():
     # If the read fails we must NOT write back an empty list — that would
     # silently delete every other output processor configured in FPP.
     try:
-        resp = requests.get(_fpp("/channel/output/processors"), timeout=5)
+        resp = requests.get(fpp_url("/channel/output/processors"), timeout=5)
         resp.raise_for_status()
         body = resp.json()
         if not isinstance(body, dict):
@@ -90,10 +88,10 @@ def set_brightness():
     payload = {"outputProcessors": processors}
 
     try:
-        r = requests.post(_fpp("/channel/output/processors"), json=payload, timeout=5)
+        r = requests.post(fpp_url("/channel/output/processors"), json=payload, timeout=5)
         r.raise_for_status()
     except Exception as exc:
-        return jsonify({"error": f"Controller error: {exc}"}), 502
+        return jsonify({"error": f"Controller error: {fpp_error_text(exc)}"}), 502
 
     # Persist in AppSettings so the slider restores on next page load
     setting = db.session.get(AppSetting, "brightness")

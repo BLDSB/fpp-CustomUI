@@ -207,9 +207,60 @@ next manual restart. `db.create_all()` failure also crash-looped the service.
 - **FPP sync deadline:** if fppd takes longer than ~10 minutes to come up, the
   playlist regeneration is skipped until the next fpp-ui restart (logged at
   ERROR). Extending the wait indefinitely was judged worse than a loud log.
-- SVG uploads are accepted for logo/background; an authenticated admin could
-  upload scripted SVG (stored-XSS-adjacent). Left as-is: upload requires the
-  admin session, the same session the script could steal.
+- Port 5000 is bound on all interfaces (not just via Apache) by design, so a
+  device on the LAN can reach Flask directly; the login and the checks below
+  still apply there.
+
+## 11. Security Audit Pass (OWASP / auth / resilience)
+
+Reviewed every route for authorization, injection, XSS, CSRF, upload handling
+and error disclosure. SQL is all ORM or fixed-constant DDL (no injection
+found); every route except login/setup/logout and the token-checked `/internal/`
+pair requires a session (asserted for the whole URL map in `tests/test_security.py`).
+
+| Finding | Risk | Fix |
+|---|---|---|
+| No CSRF defence beyond browser defaults | A page on another site could fire state-changing requests (reboot, restore, stop) at a logged-in admin's browser | `SESSION_COOKIE_SAMESITE=Lax` + HttpOnly; `app/security.py` rejects unsafe-method requests whose Origin/Referer host differs from the request host or Apache's `X-Forwarded-Host` (stock Apache does not forward the browser's Host, so in that case only a LAN-style origin — private IP, `.local`, single-label name — is accepted and public hostnames and `null` are refused; `TRUSTED_ORIGINS` in `.env` covers unusual proxies) |
+| No security headers | Clickjacking and MIME sniffing | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`; `Cache-Control: no-store` on `/api/` |
+| Scripted SVG / disguised files accepted as branding images | Stored XSS on the UI's origin (the vhost CSP allows inline script) | `app/uploads.py` checks magic bytes and blocks scripts/handlers/`foreignObject` in SVGs, on upload and on restore; 8 MB cap |
+| `hmac.compare_digest` on non-ASCII token | A junk `?token=` caused a 500 instead of 403 | One shared `internal_token_error()` compares bytes |
+| Non-object / wrong-typed JSON bodies | `[1]` or `"name": 123` raised AttributeError (500) | `app/validation.py` (`json_object`, `str_field`) used by every route |
+| Playlist names pasted into FPP URLs unencoded | `?`, `#`, `%` in a name rewrote the request path | `playlist_url()` percent-encodes |
+| Restore chunk upload unbounded | An authenticated client could fill the SD card | Chunks may not exceed the declared total; 16 GB absolute cap |
+| `change-pin` unthrottled | A stolen session could brute-force the current/master PIN | Shares the login lockout |
+| No rate limiting beyond login | Reboot/restore/backup/upload could be hammered | `rate_limited()` on reboot, restore apply, backup, image upload, overlay rebuild |
+| Raw exception text returned to the browser | Leaked the controller's address and connection internals | `fpp_error_text()` returns a plain sentence; detail goes to the log |
+| API errors (404/405/413...) returned as HTML | The front end could not read them | JSON error bodies for `/api/` and `/internal/` |
+| `err.message` placed in `innerHTML` | Server-supplied text rendered as markup | Wrapped in `escHtml()` |
+
+## 12. FPP silently ignores overlay switch-on (field finding, 2026-10-09)
+
+**Symptom:** scenes, colors and effects "do nothing" with no error anywhere; the
+lights stay dark for minutes, then work again, often right after an fppd restart.
+
+**Cause (reproduced on a Pi 3B+ running FPP 9.5.3):** after the "Stop Effects"
+command the app sends before every scene or effect, FPP answers `200 OK` to
+`PUT /overlays/model/<name>/state {"State": 1}` but leaves the model off
+(`isActive: 0`). The fill still lands in the model's memory, so a check of the
+data (`lit=100`) looks healthy while nothing is sent to the lights. A pause of
+0.5 to 5 seconds before the switch-on does not help; sending the switch-on a
+second time always does. Without the Stop Effects command it never happens.
+
+**Fix:** `ensure_models_active()` in `app/fpp_api.py`. After switching models on,
+read `/overlays/models`, and re-send the activation for any model still off, up to
+twice. If one still will not switch on the request fails with a message naming it
+instead of reporting success. If FPP cannot be asked, the original requests are
+trusted. Used by scenes (including FPP's own `/internal/` callbacks), the color
+picker and effects. Cost: about 0.25 s per apply, more when retries are needed
+(a 15-zone scene took ~3 s while the quirk was firing every time).
+
+**Related hardware finding:** the same Pi reported `Raspberry Pi Voltage Too Low`
+(`vcgencmd get_throttled` = `0xd0005`, "Undervoltage detected" in `dmesg` every
+~15 s). It may be what makes the quirk frequent. Check `vcgencmd get_throttled`
+first when lights misbehave.
+
+**Do not measure success by `lit` alone** when debugging: check `isActive`, and
+watch UDP port 4048 to the output controller (`tcpdump -i eth0 host <ip>`).
 
 ## Not Changed (deliberately)
 

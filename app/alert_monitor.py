@@ -19,6 +19,9 @@ from email.mime.text import MIMEText
 
 import requests
 
+from app.fpp_api import fpp_url
+
+
 _logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _thread = None
@@ -75,10 +78,6 @@ _DOW_BITS = {0: 0x02000, 1: 0x01000, 2: 0x00800, 3: 0x00400,
 # FPP counts odd/even days from its own epoch: the first commit to the FPP
 # repository, 15 July 2013 (Scheduler.cpp).
 _FPP_EPOCH = date(2013, 7, 15)
-
-
-def _fpp(app, path):
-    return f"{app.config['FPP_BASE_URL']}{path}"
 
 
 def _to_int(value, default, lo=None, hi=None):
@@ -139,7 +138,7 @@ def _fetch_status(app):
     """fppd's status, or None if it cannot be reached. None is meaningful —
     an unreachable fppd is itself an outage worth alerting on."""
     try:
-        resp = requests.get(_fpp(app, "/fppd/status"), timeout=5)
+        resp = requests.get(fpp_url("/fppd/status", app), timeout=5)
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
@@ -210,7 +209,7 @@ def _fetch_schedule(app):
     """The raw schedule. Apache serves this, so unlike /fppd/status it keeps
     answering while fppd is down — which is exactly when we need it."""
     try:
-        resp = requests.get(_fpp(app, "/schedule"), timeout=5)
+        resp = requests.get(fpp_url("/schedule", app), timeout=5)
         resp.raise_for_status()
         return resp.json() or []
     except Exception as exc:
@@ -268,7 +267,82 @@ def _arm(key: tuple[str, int], delay_min: int, source: str):
     )
 
 
+def _update_watch_state(status, now, delay_min, fallback, down_for_good):
+    """Advance the shared watch state for one poll; returns the checks now due.
+
+    Must be called with ``_lock`` held.
+    """
+    global _expected
+
+    # A start we were watching has come and gone — put it on the clock.
+    if _expected is not None and _expected[1] <= now:
+        _arm(_expected, delay_min, "from fppd")
+        _expected = None
+
+    # fppd is unreachable: anything the schedule says should have started
+    # recently gets checked too, so an fppd that died before we learned
+    # about tonight's show still raises an alert.
+    for key in fallback:
+        if key[1] <= now <= key[1] + _FALLBACK_WINDOW:
+            _arm(key, delay_min, "from schedule, fppd unreachable")
+
+    if status is not None:
+        # Anything confirmed playing is off the hook, even if it finishes
+        # before its check time comes around.
+        for key in list(_pending):
+            if _is_running(status, *key):
+                _pending.pop(key, None)
+                _handled[key] = now
+                _logger.info("Alert monitor: '%s' is playing — no alert", key[0])
+
+        # Only ever arm on a start that is still ahead of us, so a stale
+        # value from fppd cannot fire an alert for something long past.
+        nxt = _next_start(status)
+        if nxt is not None and nxt[1] > now and nxt != _expected:
+            _expected = nxt
+            _logger.info(
+                "Alert monitor: watching '%s', due %s",
+                nxt[0], datetime.fromtimestamp(nxt[1]).strftime("%a %H:%M"),
+            )
+
+    due = []
+    for key, check_at in list(_pending.items()):
+        if check_at > now:
+            continue
+        if status is None and not down_for_good:
+            # fppd has only just stopped answering — it may be restarting.
+            # Leave this pending and decide on a later poll.
+            continue
+        _pending.pop(key, None)
+        _handled[key] = now
+        due.append(key)
+
+    # Keep _handled from growing without bound across a long season.
+    for key, when in list(_handled.items()):
+        if now - when > 86400:
+            _handled.pop(key, None)
+    return due
+
+
+def _send_due_alerts(settings, due, status):
+    """Email an alert for each due check: fppd-down if it is silent, else not-playing."""
+    for playlist, _start in due:
+        if status is None:
+            _logger.warning(
+                "Alert monitor: '%s' was due and fppd is not responding. Sending alert.",
+                playlist,
+            )
+            _alert_fppd_down(settings, playlist)
+        else:
+            _logger.warning(
+                "Alert monitor: '%s' should be playing but is not. Sending alert.",
+                playlist,
+            )
+            _alert_not_playing(settings, playlist)
+
+
 def _process(app):
+    """One monitor poll: read fppd's state, update what we watch, alert on misses."""
     global _expected, _last_poll, _fppd_reachable, _status_failures
 
     settings = _load_settings(app)
@@ -293,68 +367,9 @@ def _process(app):
 
     with _lock:
         _last_poll, _fppd_reachable = now, status is not None
+        due = _update_watch_state(status, now, delay_min, fallback, down_for_good)
 
-        # A start we were watching has come and gone — put it on the clock.
-        if _expected is not None and _expected[1] <= now:
-            _arm(_expected, delay_min, "from fppd")
-            _expected = None
-
-        # fppd is unreachable: anything the schedule says should have started
-        # recently gets checked too, so an fppd that died before we learned
-        # about tonight's show still raises an alert.
-        for key in fallback:
-            if key[1] <= now <= key[1] + _FALLBACK_WINDOW:
-                _arm(key, delay_min, "from schedule, fppd unreachable")
-
-        if status is not None:
-            # Anything confirmed playing is off the hook, even if it finishes
-            # before its check time comes around.
-            for key in list(_pending):
-                if _is_running(status, *key):
-                    _pending.pop(key, None)
-                    _handled[key] = now
-                    _logger.info("Alert monitor: '%s' is playing — no alert", key[0])
-
-            # Only ever arm on a start that is still ahead of us, so a stale
-            # value from fppd cannot fire an alert for something long past.
-            nxt = _next_start(status)
-            if nxt is not None and nxt[1] > now and nxt != _expected:
-                _expected = nxt
-                _logger.info(
-                    "Alert monitor: watching '%s', due %s",
-                    nxt[0], datetime.fromtimestamp(nxt[1]).strftime("%a %H:%M"),
-                )
-
-        due = []
-        for key, check_at in list(_pending.items()):
-            if check_at > now:
-                continue
-            if status is None and not down_for_good:
-                # fppd has only just stopped answering — it may be restarting.
-                # Leave this pending and decide on a later poll.
-                continue
-            _pending.pop(key, None)
-            _handled[key] = now
-            due.append(key)
-
-        # Keep _handled from growing without bound across a long season.
-        for key, when in list(_handled.items()):
-            if now - when > 86400:
-                _handled.pop(key, None)
-
-    for playlist, _start in due:
-        if status is None:
-            _logger.warning(
-                "Alert monitor: '%s' was due and fppd is not responding. Sending alert.",
-                playlist,
-            )
-            _alert_fppd_down(settings, playlist)
-        else:
-            _logger.warning(
-                "Alert monitor: '%s' should be playing but is not. Sending alert.",
-                playlist,
-            )
-            _alert_not_playing(settings, playlist)
+    _send_due_alerts(settings, due, status)
 
     try:
         _process_upcoming(app, settings, status, now)
@@ -521,7 +536,7 @@ def _state_set(app, key, value):
 def _fetch_fppd_schedule(app):
     """fppd's resolved schedule block, or None if it can't be read."""
     try:
-        resp = requests.get(_fpp(app, "/fppd/schedule"), timeout=5)
+        resp = requests.get(fpp_url("/fppd/schedule", app), timeout=5)
         resp.raise_for_status()
         sched = resp.json().get("schedule")
         return sched if isinstance(sched, dict) else None
@@ -537,7 +552,7 @@ def _file_names(app, paths):
     names = set()
     for path in paths:
         try:
-            resp = requests.get(_fpp(app, path), timeout=5)
+            resp = requests.get(fpp_url(path, app), timeout=5)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -561,7 +576,7 @@ def _preflight_all(app, due):
 
     def load(name):
         try:
-            resp = requests.get(_fpp(app, f"/playlist/{quote(name, safe='')}"), timeout=5)
+            resp = requests.get(fpp_url(f"/playlist/{quote(name, safe='')}", app), timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception:

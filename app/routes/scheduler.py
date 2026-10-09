@@ -3,10 +3,12 @@ import re
 from datetime import date, datetime
 
 import requests
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template
 
 from app.auth_utils import login_required
+from app.fpp_api import fpp_error_text, fpp_url
 from app.models import Holiday
+from app.validation import json_object
 
 scheduler_bp = Blueprint("scheduler", __name__)
 
@@ -29,13 +31,9 @@ def _parse_date(value):
         return None
 
 
-def _fpp_base():
-    return current_app.config.get("FPP_BASE_URL", "http://localhost/api")
-
-
 def _load_schedule():
     """Fetch schedule from FPP. Returns a list of entry dicts."""
-    resp = requests.get(f"{_fpp_base()}/schedule", timeout=5)
+    resp = requests.get(fpp_url("/schedule"), timeout=5)
     resp.raise_for_status()
     data = resp.json()
     # FPP v9 returns {"schedule": [...]}; older versions return the list directly
@@ -46,10 +44,10 @@ def _load_schedule():
 
 def _save_schedule(entries):
     """POST the full schedule back to FPP and reload it."""
-    resp = requests.post(f"{_fpp_base()}/schedule", json=entries, timeout=5)
+    resp = requests.post(fpp_url("/schedule"), json=entries, timeout=5)
     resp.raise_for_status()
     try:
-        requests.post(f"{_fpp_base()}/schedule/reload", timeout=3)
+        requests.post(fpp_url("/schedule/reload"), timeout=3)
     except Exception:
         pass
     return entries
@@ -113,6 +111,55 @@ def sync_holiday_entries(entries=None, rename=None, delete_name=None):
     return entries, changed
 
 
+def _int_field(data, key, default, is_valid, message):
+    """``(int, None)`` for ``data[key]``, or ``(None, message)`` if it is not a valid int."""
+    try:
+        value = int(data.get(key, default))
+        if not is_valid(value):
+            raise ValueError
+    except (TypeError, ValueError):
+        return None, message
+    return value, None
+
+
+def _time_field(data, key):
+    """``(time string, None)`` if ``data[key]`` is HH:MM:SS or a solar label."""
+    value = str(data.get(key, "")).strip()
+    if value not in SOLAR_TIMES and not _TIME_RE.match(value):
+        return None, f"{key} must be HH:MM:SS or a solar label"
+    return value, None
+
+
+def _resolve_entry_dates(data, holiday_name):
+    """``(start_date, end_date, error)`` — from the named holiday, else the payload."""
+    if holiday_name:
+        holiday = Holiday.query.filter_by(name=holiday_name).first()
+        if not holiday:
+            return None, None, f"Unknown holiday: {holiday_name}"
+        start_date, end_date = resolve_holiday_dates(holiday)
+        return start_date, end_date, None
+    start_date = _parse_date(data.get("startDate"))
+    end_date = _parse_date(data.get("endDate"))
+    if start_date is None or end_date is None:
+        return None, None, "startDate and endDate must be YYYY-MM-DD or empty"
+    start_date = start_date or DEFAULT_START_DATE
+    end_date = end_date or DEFAULT_END_DATE
+    if start_date > end_date:
+        return None, None, "startDate must not be after endDate"
+    return start_date, end_date, None
+
+
+def _valid_day(value):
+    return (0 <= value <= 15) or (256 <= value <= 32512)
+
+
+def _valid_offset(minutes):
+    # FPP stores solar offsets in MINUTES (see GetTimeFromSun in ScheduleEntry.cpp);
+    # anything past a day pushes the computed time out of range and FPP silently
+    # falls back to 8AM/8PM.
+    return -1439 <= minutes <= 1439
+
+
 def _validate(data):
     """Validate a schedule entry payload. Returns (entry_dict, error_str)."""
     playlist = str(data.get("playlist", "")).strip()
@@ -122,74 +169,45 @@ def _validate(data):
     if not playlist and not command:
         return None, "playlist or command is required"
 
-    try:
-        day = int(data.get("day", 0))
-        if not ((0 <= day <= 15) or (256 <= day <= 32512)):
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "day must be a valid day index or bitmask"
+    day, err = _int_field(data, "day", 0, _valid_day,
+                          "day must be a valid day index or bitmask")
+    if err:
+        return None, err
 
-    start_time = str(data.get("startTime", "")).strip()
-    if start_time not in SOLAR_TIMES and not _TIME_RE.match(start_time):
-        return None, "startTime must be HH:MM:SS or a solar label"
+    start_time, err = _time_field(data, "startTime")
+    if err:
+        return None, err
+    end_time, err = _time_field(data, "endTime")
+    if err:
+        return None, err
 
-    end_time = str(data.get("endTime", "")).strip()
-    if end_time not in SOLAR_TIMES and not _TIME_RE.match(end_time):
-        return None, "endTime must be HH:MM:SS or a solar label"
+    start_offset, err = _int_field(
+        data, "startTimeOffset", 0, _valid_offset,
+        "startTimeOffset must be a number of minutes between -1439 and 1439")
+    if err:
+        return None, err
+    end_offset, err = _int_field(
+        data, "endTimeOffset", 0, _valid_offset,
+        "endTimeOffset must be a number of minutes between -1439 and 1439")
+    if err:
+        return None, err
 
-    # FPP stores solar offsets in MINUTES (see GetTimeFromSun in ScheduleEntry.cpp);
-    # anything past a day pushes the computed time out of range and FPP silently
-    # falls back to 8AM/8PM.
-    try:
-        start_offset = int(data.get("startTimeOffset", 0))
-        if not -1439 <= start_offset <= 1439:
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "startTimeOffset must be a number of minutes between -1439 and 1439"
-
-    try:
-        end_offset = int(data.get("endTimeOffset", 0))
-        if not -1439 <= end_offset <= 1439:
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "endTimeOffset must be a number of minutes between -1439 and 1439"
-
-    try:
-        repeat = int(data.get("repeat", 0))
-        if repeat not in (0, 1):
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "repeat must be 0 or 1"
-
-    try:
-        enabled = int(data.get("enabled", 1))
-        if enabled not in (0, 1):
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "enabled must be 0 or 1"
-
-    try:
-        stop_type = int(data.get("stopType", 0))
-        if stop_type not in (0, 1, 2):
-            raise ValueError
-    except (TypeError, ValueError):
-        return None, "stopType must be 0 (Graceful), 1 (Hard Stop), or 2 (Immediate)"
+    repeat, err = _int_field(data, "repeat", 0, lambda v: v in (0, 1), "repeat must be 0 or 1")
+    if err:
+        return None, err
+    enabled, err = _int_field(data, "enabled", 1, lambda v: v in (0, 1), "enabled must be 0 or 1")
+    if err:
+        return None, err
+    stop_type, err = _int_field(
+        data, "stopType", 0, lambda v: v in (0, 1, 2),
+        "stopType must be 0 (Graceful), 1 (Hard Stop), or 2 (Immediate)")
+    if err:
+        return None, err
 
     holiday_name = str(data.get("holiday", "")).strip()
-    if holiday_name:
-        holiday = Holiday.query.filter_by(name=holiday_name).first()
-        if not holiday:
-            return None, f"Unknown holiday: {holiday_name}"
-        start_date, end_date = resolve_holiday_dates(holiday)
-    else:
-        start_date = _parse_date(data.get("startDate"))
-        end_date = _parse_date(data.get("endDate"))
-        if start_date is None or end_date is None:
-            return None, "startDate and endDate must be YYYY-MM-DD or empty"
-        start_date = start_date or DEFAULT_START_DATE
-        end_date = end_date or DEFAULT_END_DATE
-        if start_date > end_date:
-            return None, "startDate must not be after endDate"
+    start_date, end_date, err = _resolve_entry_dates(data, holiday_name)
+    if err:
+        return None, err
 
     entry = {
         "enabled":         enabled,
@@ -234,13 +252,13 @@ def list_schedule():
         entries, _ = sync_holiday_entries()
         return jsonify({"entries": entries})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @scheduler_bp.post("/api/schedule/entry")
 @login_required
 def add_entry():
-    fields, error = _validate(request.get_json(silent=True) or {})
+    fields, error = _validate(json_object())
     if error:
         return jsonify({"error": error}), 400
     try:
@@ -249,13 +267,13 @@ def add_entry():
         _save_schedule(entries)
         return jsonify({"ok": True, "entries": entries}), 201
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @scheduler_bp.put("/api/schedule/entry/<int:idx>")
 @login_required
 def update_entry(idx):
-    fields, error = _validate(request.get_json(silent=True) or {})
+    fields, error = _validate(json_object())
     if error:
         return jsonify({"error": error}), 400
     try:
@@ -266,14 +284,14 @@ def update_entry(idx):
         _save_schedule(entries)
         return jsonify({"ok": True, "entries": entries})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @scheduler_bp.post("/api/schedule/entry/<int:idx>/move")
 @login_required
 def move_entry(idx):
     """Move an entry up/down the list. FPP gives earlier entries higher priority."""
-    direction = (request.get_json(silent=True) or {}).get("direction")
+    direction = (json_object()).get("direction")
     if direction not in ("up", "down", "top", "bottom"):
         return jsonify({"error": "direction must be up, down, top or bottom"}), 400
     try:
@@ -287,7 +305,7 @@ def move_entry(idx):
             _save_schedule(entries)
         return jsonify({"ok": True, "entries": entries})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @scheduler_bp.delete("/api/schedule/entry/<int:idx>")
@@ -301,7 +319,7 @@ def delete_entry(idx):
         _save_schedule(entries)
         return jsonify({"ok": True, "entries": entries})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 # ---------------------------------------------------------------------------
@@ -322,11 +340,11 @@ def schedule_preview():
     project docs for why we never recompute this from the raw entries.
     """
     try:
-        resp = requests.get(f"{_fpp_base()}/fppd/schedule", timeout=5)
+        resp = requests.get(fpp_url("/fppd/schedule"), timeout=5)
         resp.raise_for_status()
         sched = resp.json().get("schedule", {})
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
     entries = {e.get("id"): e for e in sched.get("entries", [])}
     running = []  # (end epoch, priority) for playlists that have started and not ended

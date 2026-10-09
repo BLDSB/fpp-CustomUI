@@ -1,9 +1,11 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_api import fpp_error_text
 from app.models import Holiday
 from app.routes.scheduler import sync_holiday_entries
+from app.validation import json_object, str_field
 
 holidays_bp = Blueprint("holidays", __name__)
 
@@ -13,7 +15,7 @@ _DAYS_IN_MONTH = {2: 29, 4: 30, 6: 30, 9: 30, 11: 30}  # Feb 29 allowed; clamped
 
 def _parse(data, current_id=None):
     """Return (fields, error)."""
-    name = (data.get("name") or "").strip()
+    name = str_field(data, "name")
     if not name or len(name) > 64:
         return None, "Name required (max 64 chars)"
     if "/" in name or "\\" in name or ".." in name:
@@ -48,7 +50,7 @@ def list_holidays():
 @holidays_bp.post("/api/holidays")
 @login_required
 def create_holiday():
-    fields, error = _parse(request.get_json(silent=True) or {})
+    fields, error = _parse(json_object())
     if error:
         return _err(error)
     h = Holiday(**fields)
@@ -63,7 +65,7 @@ def update_holiday(hid):
     h = db.session.get(Holiday, hid)
     if not h:
         return jsonify({"error": "Holiday not found"}), 404
-    fields, error = _parse(request.get_json(silent=True) or {}, current_id=hid)
+    fields, error = _parse(json_object(), current_id=hid)
     if error:
         return _err(error)
     old_name = h.name
@@ -74,7 +76,7 @@ def update_holiday(hid):
         _, changed = sync_holiday_entries(
             rename=(old_name, h.name) if old_name != h.name else None)
     except Exception as exc:
-        return jsonify({"error": f"Saved, but updating the schedule failed: {exc}"}), 502
+        return jsonify({"error": f"Saved, but updating the schedule failed: {fpp_error_text(exc)}"}), 502
     return jsonify({**h.to_dict(), "updated_entries": changed})
 
 
@@ -90,5 +92,5 @@ def delete_holiday(hid):
     try:
         sync_holiday_entries(delete_name=name)
     except Exception as exc:
-        return jsonify({"error": f"Deleted, but updating the schedule failed: {exc}"}), 502
+        return jsonify({"error": f"Deleted, but updating the schedule failed: {fpp_error_text(exc)}"}), 502
     return jsonify({"ok": True})

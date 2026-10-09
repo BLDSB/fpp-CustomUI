@@ -494,7 +494,7 @@
         next:      document.getElementById('sched-next'),
     };
     let currentPlaylist = null;
-    let statusPollTimer = null;
+    let stopStatusPoll = null;
     // Scene and Effect playlists are applied directly by Flask (overlay models),
     // so FPP reports nothing playing while they are active — track them here.
     let activeOverlay = null;      // playlist name, e.g. "Scene - Warm" / "Effect - Twinkle"
@@ -655,13 +655,13 @@
         try {
             const [data, built] = await Promise.all([
                 apiFetch('/api/playlists'),
-                apiFetch('/api/custom-playlists').catch(() => []),
+                apiFetch('/api/custom-playlists?summary=1').catch(() => []),
             ]);
             audioNames = await loadAudioNames(data.playlists || [], forceAudio === true);
             builtNames = new Set((built || []).map(p => p.name));
             renderPlaylists((data.playlists || []).filter(p => p !== 'Turn Off Lights' && (!hasSequences ? p !== 'Current-Sequence' : true)));
         } catch (err) {
-            grid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+            grid.innerHTML = `<p class="empty-state">Error: ${escHtml(err.message)}</p>`;
             showToast(err.message, 'error');
         }
     }
@@ -864,9 +864,8 @@
     }
 
     function startPolling() {
-        clearInterval(statusPollTimer);
-        pollStatus();
-        statusPollTimer = setInterval(pollStatus, 5000);
+        if (stopStatusPoll) stopStatusPoll();
+        stopStatusPoll = pollWhileVisible(pollStatus, 5000);
     }
 
     // ── Play a playlist ────────────────────────────────────────
@@ -956,7 +955,7 @@
             // Current-Sequence shows/hides accordingly.
             if (hasSequences !== prev) loadPlaylists();
         } catch (err) {
-            seqGrid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+            seqGrid.innerHTML = `<p class="empty-state">Error: ${escHtml(err.message)}</p>`;
         }
     }
 

@@ -10,6 +10,7 @@ from flask import Blueprint, current_app, jsonify, redirect, render_template, re
 
 from app.auth_utils import login_required
 from app import ui_path as ui_path_mod
+from app.validation import json_object
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -237,7 +238,7 @@ def logout():
 @auth_bp.post("/api/change-pin")
 @login_required
 def change_pin():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     current_pw = data.get("current_pin", "")
     new_pin    = str(data.get("new_pin", "")).strip()
 
@@ -248,8 +249,16 @@ def change_pin():
     # the session must be a master login AND the master PIN re-entered, so a
     # regular session can never use the master PIN here.
     master_override = bool(session.get("is_master")) and _check_pin(str(current_pw), master_hash)
+    client_ip = request.remote_addr or "unknown"
+    wait = _throttle_wait(client_ip)
+    if wait:
+        return jsonify({"error": f"Too many attempts. Try again in {wait} seconds."}), 429
     if not (master_override or _check_pin(str(current_pw), stored_hash)):
+        # Same lockout as the login page: a stolen session must not be able to
+        # brute-force the current PIN through this endpoint instead.
+        _record_login_failure(client_ip)
         return jsonify({"error": "Current PIN is incorrect."}), 400
+    _clear_login_failures(client_ip)
 
     failure = _persist_pin("ADMIN_PASSWORD_HASH", new_pin, label="New PIN")
     if failure is not None:
@@ -268,7 +277,7 @@ def set_master_pin():
     if not session.get("is_master"):
         return jsonify({"error": "Master PIN required."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     new_pin = str(data.get("new_pin", "")).strip()
 
     failure = _persist_pin("MASTER_PIN_HASH", new_pin, label="Master PIN")

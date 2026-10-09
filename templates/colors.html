@@ -641,7 +641,7 @@
             }
             list.forEach(appendButton);
         } catch (err) {
-            savedGrid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+            savedGrid.innerHTML = `<p class="empty-state">Error: ${escHtml(err.message)}</p>`;
         }
     }
 
@@ -706,7 +706,7 @@
             }
             list.forEach(s => scenesGrid.appendChild(renderScene(s)));
         } catch (err) {
-            scenesGrid.innerHTML = `<p class="empty-state">Error: ${err.message}</p>`;
+            scenesGrid.innerHTML = `<p class="empty-state">Error: ${escHtml(err.message)}</p>`;
         }
     }
 

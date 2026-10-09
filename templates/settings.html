@@ -1327,7 +1327,7 @@
             if (m.collisions > 0)
                 notes.push(`${m.collisions} node(s) landed on an occupied cell`);
             if (m.channel_mismatch)
-                notes.push(`The controller currently has channel ${m.current_start_channel} × ${m.current_channel_count}`);
+                notes.push(`The controller currently has channel ${escHtml(String(m.current_start_channel))} × ${escHtml(String(m.current_channel_count))}`);
             if (m.slot === null)
                 notes.push('No zone available — only Zone 1–15 exist');
 
@@ -2013,8 +2013,7 @@
             box.textContent = 'Could not read monitor status.';
         }
     }
-    refreshAlertState();
-    setInterval(refreshAlertState, 30000);
+    pollWhileVisible(refreshAlertState, 30000);
 
     document.getElementById('btn-test-alert').addEventListener('click', async () => {
         const btn = document.getElementById('btn-test-alert');
