@@ -38,8 +38,10 @@
         letter-spacing: 0.06em;
         text-transform: uppercase;
     }
-    tbody tr { border-bottom: 1px solid var(--border-dim); }
-    tbody tr:hover { background: rgba(255,255,255,0.03); }
+    tbody tr { border-bottom: 2px solid #000; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:nth-child(even) { background: rgba(255,255,255,0.045); }
+    tbody tr:hover { background: rgba(255,255,255,0.08); }
     tbody td { padding: 0.6rem 0.85rem; vertical-align: middle; }
     .disabled-row { opacity: 0.45; }
 
@@ -56,6 +58,7 @@
     .toggle-btn.off { background: rgba(255,255,255,0.06); color: var(--text-dim); border: 1px solid var(--border-dim); }
 
     /* Action buttons in table */
+    .row-actions { display: grid; gap: 0.3rem; width: 5rem; }
     .action-btn {
         padding: 0.2rem 0.55rem;
         border-radius: 4px;
@@ -64,10 +67,28 @@
         font-size: 0.78rem;
         margin-left: 0.25rem;
     }
+    .row-actions .action-btn { width: 100%; margin-left: 0; }
     .btn-edit   { background: rgba(126,200,227,0.12); color: #7ec8e3; border: 1px solid rgba(126,200,227,0.25); }
     .btn-edit:hover { background: rgba(126,200,227,0.22); }
     .btn-delete { background: rgba(233,69,96,0.12); color: #f5a0a0; border: 1px solid rgba(233,69,96,0.25); }
     .btn-delete:hover { background: rgba(233,69,96,0.22); }
+
+    /* Priority reorder control (touch-sized) */
+    .prio-cell { white-space: nowrap; }
+    .prio-num { display: inline-block; min-width: 1.4rem; text-align: center; font-weight: 700; color: var(--text-dim); }
+    .move-btn {
+        width: 2.4rem;
+        height: 2.4rem;
+        border-radius: 6px;
+        border: 1px solid var(--border-dim);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        font-size: 1rem;
+        cursor: pointer;
+        vertical-align: middle;
+    }
+    .move-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .move-btn:disabled { opacity: 0.25; cursor: default; }
 
     /* Primary / ghost buttons */
     .btn-primary {
@@ -202,12 +223,15 @@
     </div>
 </div>
 
+<p class="date-hint" style="margin:0 0 0.75rem">Priority: if two events start at the same time, the one higher in the list runs. Use ▲ ▼ to reorder.</p>
+
 <p id="loading-msg" class="info-msg">Loading schedule…</p>
 
 <div class="tbl-wrap">
     <table id="schedule-table" hidden>
         <thead>
             <tr>
+                <th title="Higher in the list wins when events start at the same time">Priority</th>
                 <th>Enabled</th>
                 <th>Action</th>
                 <th>Days</th>
@@ -534,6 +558,13 @@
         tbody.innerHTML = entries.map((e, i) => {
             const isOn = e.enabled === '1' || e.enabled === 1;
             return `<tr class="${isOn ? '' : 'disabled-row'}" data-idx="${i}">
+                <td class="prio-cell">
+                    <button class="move-btn" data-idx="${i}" data-dir="up" title="Higher priority"
+                            aria-label="Move up" ${i === 0 ? 'disabled' : ''}>▲</button>
+                    <span class="prio-num">${i + 1}</span>
+                    <button class="move-btn" data-idx="${i}" data-dir="down" title="Lower priority"
+                            aria-label="Move down" ${i === entries.length - 1 ? 'disabled' : ''}>▼</button>
+                </td>
                 <td>
                     <button class="toggle-btn ${isOn ? 'on' : 'off'}"
                             data-idx="${i}" data-enabled="${isOn ? 1 : 0}"
@@ -548,8 +579,10 @@
                 <td>${formatTimeCell(e.endTime, e.endTimeOffset)}</td>
                 <td>${e.repeat === '1' || e.repeat === 1 ? 'Yes' : 'No'}</td>
                 <td>
-                    <button class="action-btn btn-edit" data-idx="${i}">Edit</button>
-                    <button class="action-btn btn-delete" data-idx="${i}">Delete</button>
+                    <div class="row-actions">
+                        <button class="action-btn btn-edit" data-idx="${i}">Edit</button>
+                        <button class="action-btn btn-delete" data-idx="${i}">Delete</button>
+                    </div>
                 </td>
             </tr>`;
         }).join('');
@@ -776,6 +809,28 @@
         }
     }
 
+    // ── Reorder (priority) ─────────────────────────────────────────────────
+    let moving = false;
+    async function moveEntry(idx, direction) {
+        if (moving) return;
+        moving = true;
+        try {
+            const res  = await fetch(`${R}/api/schedule/entry/${idx}/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Move failed');
+            scheduleEntries = data.entries || scheduleEntries;
+            renderTable(scheduleEntries);
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        } finally {
+            moving = false;
+        }
+    }
+
     // ── Delete ─────────────────────────────────────────────────────────────
     async function deleteEntry(idx) {
         if (!confirm(`Delete the "${getEntryDisplayName(scheduleEntries[idx])}" entry?`)) return;
@@ -947,11 +1002,14 @@
     document.getElementById('f-end-type').addEventListener('change',   () => onTimeTypeChange('end'));
 
     document.getElementById('schedule-body').addEventListener('click', e => {
+        const move   = e.target.closest('.move-btn');
         const toggle = e.target.closest('.toggle-btn');
         const edit   = e.target.closest('.btn-edit');
         const del    = e.target.closest('.btn-delete');
 
-        if (toggle) {
+        if (move) {
+            moveEntry(parseInt(move.dataset.idx, 10), move.dataset.dir);
+        } else if (toggle) {
             toggleEnabled(parseInt(toggle.dataset.idx, 10));
         } else if (edit) {
             const idx = parseInt(edit.dataset.idx, 10);
