@@ -16,6 +16,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_api import fpp_url, playlist_url
 from app.fpp_playlist import (
     build_playlist_def,
     effect_entries,
@@ -23,17 +24,14 @@ from app.fpp_playlist import (
     scene_entries,
     sequence_entry,
 )
-from app.models import CustomPlaylist, CustomPlaylistItem, EffectPreset, Scene
+from app.models import CustomPlaylist, CustomPlaylistItem, EffectPreset, Scene, ref_name_lookups
+from app.validation import json_object, page_args, str_field
 
 custom_playlists_bp = Blueprint("custom_playlists", __name__)
 
 # Names FPP or this app already uses for generated playlists.
 _RESERVED_PREFIXES = ("Scene - ", "Effect - ")
 _RESERVED_NAMES = ("Current-Sequence", "Turn Off Lights")
-
-
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
 
 
 def _playlist_entries(cp):
@@ -80,7 +78,7 @@ def _write_custom_playlist(cp):
         entries = [pause_item(5)]
     playlist_def = build_playlist_def(cp.name, entries, "FPP UI Playlist", cp.repeat)
     try:
-        requests.post(_fpp(f"/playlist/{cp.name}"), json=playlist_def, timeout=5).raise_for_status()
+        requests.post(playlist_url(cp.name), json=playlist_def, timeout=5).raise_for_status()
         return True
     except requests.RequestException as exc:
         current_app.logger.warning(
@@ -91,7 +89,7 @@ def _write_custom_playlist(cp):
 
 def _delete_custom_playlist(cp):
     try:
-        requests.delete(_fpp(f"/playlist/{cp.name}"), timeout=5)
+        requests.delete(playlist_url(cp.name), timeout=5)
     except requests.RequestException:
         pass
 
@@ -99,7 +97,7 @@ def _delete_custom_playlist(cp):
 def _fpp_playlist_names():
     """Names FPP already knows about, or None if FPP could not be reached."""
     try:
-        resp = requests.get(_fpp("/playlists"), timeout=5)
+        resp = requests.get(fpp_url("/playlists"), timeout=5)
         resp.raise_for_status()
         data = resp.json()
         names = data if isinstance(data, list) else data.get("playlists", [])
@@ -189,15 +187,26 @@ def playlists_page():
 @custom_playlists_bp.get("/api/custom-playlists")
 @login_required
 def list_custom_playlists():
-    rows = CustomPlaylist.query.order_by(CustomPlaylist.name).all()
-    return jsonify([p.to_dict() for p in rows])
+    """All custom playlists, name order. ``?summary=1`` returns just id + name.
+
+    The Controls page only needs the names (to badge built playlists), so the
+    summary form skips loading every item and resolving its label.
+    ``limit``/``offset`` page through the list (default cap 500).
+    """
+    limit, offset = page_args()
+    query = CustomPlaylist.query.order_by(CustomPlaylist.name).limit(limit).offset(offset)
+    if request.args.get("summary") == "1":
+        rows = db.session.query(CustomPlaylist.id, CustomPlaylist.name)             .order_by(CustomPlaylist.name).limit(limit).offset(offset).all()
+        return jsonify([{"id": pid, "name": name} for pid, name in rows])
+    lookups = ref_name_lookups()
+    return jsonify([p.to_dict(lookups) for p in query.all()])
 
 
 @custom_playlists_bp.post("/api/custom-playlists")
 @login_required
 def create_custom_playlist():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    name = str_field(data, "name")
 
     error = _validate_name(name)
     if error:
@@ -227,8 +236,8 @@ def update_custom_playlist(playlist_id):
     if not cp:
         return jsonify({"error": "Not found"}), 404
 
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    name = str_field(data, "name")
 
     error = _validate_name(name, existing_id=cp.id)
     if error:
@@ -248,7 +257,7 @@ def update_custom_playlist(playlist_id):
     # A rename leaves the old playlist behind on FPP under its old name.
     if old_name != name:
         try:
-            requests.delete(_fpp(f"/playlist/{old_name}"), timeout=5)
+            requests.delete(playlist_url(old_name), timeout=5)
         except requests.RequestException:
             pass
 

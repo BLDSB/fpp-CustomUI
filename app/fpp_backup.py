@@ -31,6 +31,8 @@ import requests
 from flask import current_app
 
 from app import db
+from app import uploads
+from app.fpp_api import fpp_url
 
 # Bumped only when the archive layout changes in a way a reader must know
 # about. The `ui/backup.json` member carries its own independent version.
@@ -90,10 +92,6 @@ def media_root():
 
 def uploads_dir():
     return os.path.join(current_app.static_folder, "uploads")
-
-
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
 
 
 # ── Path safety ───────────────────────────────────────────────────────────────
@@ -160,7 +158,7 @@ def survey():
     # until one is made. Report reachability and leave the size unknown
     # rather than guessing — it is a few hundred kilobytes either way.
     try:
-        resp = requests.get(_fpp("/backups/configuration/list"), timeout=10)
+        resp = requests.get(fpp_url("/backups/configuration/list"), timeout=10)
         reachable = resp.ok
     except requests.RequestException:
         reachable = False
@@ -191,7 +189,7 @@ def capture_fpp_config():
     # would quietly prune these. Unsourced backups fall under the normal
     # keep-60 rule instead.
     resp = requests.post(
-        _fpp("/backups/configuration"),
+        fpp_url("/backups/configuration"),
         json={"backup_comment": "Full backup from the Custom UI"},
         timeout=180,
     )
@@ -210,7 +208,7 @@ def capture_fpp_config():
     if not filename:
         # performBackup's reply shape has changed across FPP versions; the
         # listing is the stable fallback.
-        listing = requests.get(_fpp("/backups/configuration/list"), timeout=30).json()
+        listing = requests.get(fpp_url("/backups/configuration/list"), timeout=30).json()
         entries = [
             e for e in listing
             if isinstance(e, dict) and e.get("backup_filename")
@@ -268,7 +266,7 @@ def _read_fpp_backup(filename, attempts=5):
             pass
         try:
             resp = requests.get(
-                _fpp(f"/backups/configuration/JsonBackups/{quote(filename)}"), timeout=180
+                fpp_url(f"/backups/configuration/JsonBackups/{quote(filename)}"), timeout=180
             )
             if resp.ok and _looks_like_fpp_backup(resp.content):
                 return resp.content
@@ -296,7 +294,7 @@ def restore_fpp_config(raw, filename=None):
         fh.write(raw)
 
     resp = requests.post(
-        _fpp(f"/backups/configuration/restore/JsonBackups/{quote(name)}"),
+        fpp_url(f"/backups/configuration/restore/JsonBackups/{quote(name)}"),
         data="all",
         timeout=300,
     )
@@ -312,7 +310,7 @@ def restore_fpp_config(raw, filename=None):
         raise ValueError(result.get("Message") or "The controller rejected the configuration restore")
 
     try:
-        requests.get(_fpp("/schedule/reload"), timeout=30)
+        requests.get(fpp_url("/schedule/reload"), timeout=30)
     except requests.RequestException as exc:
         current_app.logger.warning("Schedule reload after restore failed: %s", exc)
 
@@ -543,7 +541,7 @@ def build_manifest(sections, identity=None, warnings=None):
     fpp_version = ""
     hostname = ""
     try:
-        info = requests.get(_fpp("/system/info"), timeout=5).json()
+        info = requests.get(fpp_url("/system/info"), timeout=5).json()
         fpp_version = str(info.get("Version") or "")
         hostname = str(info.get("HostName") or "")
     except (requests.RequestException, ValueError):
@@ -622,8 +620,19 @@ def extract_uploads(zf, log):
         if os.path.splitext(rel)[1].lower() not in _ALLOWED_IMAGE_EXTS:
             current_app.logger.warning("Restore: skipping non-image upload %r", rel)
             continue
-        with zf.open(info) as src, open(os.path.join(dest_dir, rel), "wb") as out:
-            out.write(src.read())
+        # Check the declared size before reading, then the real bytes after:
+        # a zip can lie about file_size, so the read itself is also bounded.
+        if info.file_size > uploads.MAX_IMAGE_BYTES:
+            current_app.logger.warning("Restore: skipping oversized upload %r", rel)
+            continue
+        with zf.open(info) as src:
+            data = src.read(uploads.MAX_IMAGE_BYTES + 1)
+        problem = uploads.image_problem(rel, data)
+        if problem:
+            current_app.logger.warning("Restore: skipping upload %r — %s", rel, problem)
+            continue
+        with open(os.path.join(dest_dir, rel), "wb") as out:
+            out.write(data)
         written += 1
     if written:
         log.append(("uploads", "ok", f"Restored {written} branding image(s)"))

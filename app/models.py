@@ -39,7 +39,7 @@ class ColorButton(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     label = db.Column(db.String(64), nullable=False)
     saved_color_id = db.Column(
-        db.Integer, db.ForeignKey("saved_colors.id"), nullable=False
+        db.Integer, db.ForeignKey("saved_colors.id"), nullable=False, index=True
     )
 
     def to_dict(self):
@@ -202,7 +202,7 @@ class Scene(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), nullable=False, unique=True)
-    zones = db.relationship("SceneZone", backref="scene", lazy=True, cascade="all, delete-orphan")
+    zones = db.relationship("SceneZone", backref="scene", lazy="selectin", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -216,7 +216,7 @@ class SceneZone(db.Model):
     __tablename__ = "scene_zones"
 
     id = db.Column(db.Integer, primary_key=True)
-    scene_id = db.Column(db.Integer, db.ForeignKey("scenes.id"), nullable=False)
+    scene_id = db.Column(db.Integer, db.ForeignKey("scenes.id"), nullable=False, index=True)
     fpp_model = db.Column(db.String(32), nullable=False)
     hex_color = db.Column(db.String(7), nullable=False)
 
@@ -286,18 +286,18 @@ class CustomPlaylist(db.Model):
     items = db.relationship(
         "CustomPlaylistItem",
         backref="playlist",
-        lazy=True,
+        lazy="selectin",
         cascade="all, delete-orphan",
         order_by="CustomPlaylistItem.position",
     )
 
-    def to_dict(self):
+    def to_dict(self, lookups=None):
         return {
             "id": self.id,
             "name": self.name,
             "repeat": self.repeat,
             "random": self.random,
-            "items": [i.to_dict() for i in sorted(self.items, key=lambda i: i.position)],
+            "items": [i.to_dict(lookups) for i in sorted(self.items, key=lambda i: i.position)],
         }
 
 
@@ -308,7 +308,7 @@ class CustomPlaylistItem(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     playlist_id = db.Column(
-        db.Integer, db.ForeignKey("custom_playlists.id"), nullable=False
+        db.Integer, db.ForeignKey("custom_playlists.id"), nullable=False, index=True
     )
     position = db.Column(db.Integer, nullable=False, default=0)
     item_type = db.Column(db.String(16), nullable=False)
@@ -316,24 +316,29 @@ class CustomPlaylistItem(db.Model):
     ref_name = db.Column(db.String(255), nullable=True)  # .fseq filename
     duration = db.Column(db.Integer, nullable=False, default=30)
 
-    def resolve(self):
+    def resolve(self, lookups=None):
         """Display label plus whether the thing this points at still exists.
 
         A scene or preset can be deleted out from under a playlist, so this
         never raises — the builder shows a broken row instead of erroring.
+        ``lookups`` is the result of ``ref_name_lookups()``; pass it when
+        serialising many items so each one is a dict hit rather than a query.
         """
-        if self.item_type == "scene":
-            row = db.session.get(Scene, self.ref_id) if self.ref_id else None
-            return (row.name, False) if row else (f"Scene #{self.ref_id}", True)
-        if self.item_type == "effect":
-            row = db.session.get(EffectPreset, self.ref_id) if self.ref_id else None
-            return (row.name, False) if row else (f"Effect #{self.ref_id}", True)
+        if self.item_type in ("scene", "effect"):
+            kind = "Scene" if self.item_type == "scene" else "Effect"
+            if lookups is not None:
+                name = lookups[self.item_type].get(self.ref_id)
+            else:
+                model = Scene if self.item_type == "scene" else EffectPreset
+                row = db.session.get(model, self.ref_id) if self.ref_id else None
+                name = row.name if row else None
+            return (name, False) if name else (f"{kind} #{self.ref_id}", True)
         if self.item_type == "sequence":
             return (self.ref_name or "", False)
         return ("Pause", False)
 
-    def to_dict(self):
-        label, missing = self.resolve()
+    def to_dict(self, lookups=None):
+        label, missing = self.resolve(lookups)
         return {
             "id": self.id,
             "position": self.position,
@@ -344,6 +349,17 @@ class CustomPlaylistItem(db.Model):
             "label": label,
             "missing": missing,
         }
+
+
+def ref_name_lookups():
+    """``{"scene": {id: name}, "effect": {id: name}}`` in two column-only queries.
+
+    Lets a list of playlists resolve every item's label without a query per item.
+    """
+    return {
+        "scene": dict(db.session.query(Scene.id, Scene.name).all()),
+        "effect": dict(db.session.query(EffectPreset.id, EffectPreset.name).all()),
+    }
 
 
 def is_managed_overlay(name):

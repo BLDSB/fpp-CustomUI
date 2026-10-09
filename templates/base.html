@@ -743,6 +743,30 @@
         })();
 
         window.APP_ROOT = {{ request.script_root | tojson }};
+
+        // Run fn every `ms` while this tab is visible. A hidden tab (another
+        // browser tab, a locked phone) stops polling instead of hitting the
+        // controller all night, and refreshes immediately when it comes back.
+        // Returns a function that stops it for good.
+        window.pollWhileVisible = function (fn, ms) {
+            let timer = null;
+            function start() {
+                if (timer === null && !document.hidden) timer = setInterval(fn, ms);
+            }
+            function stop() {
+                if (timer !== null) { clearInterval(timer); timer = null; }
+            }
+            function onVisibility() {
+                if (document.hidden) { stop(); } else { fn(); start(); }
+            }
+            document.addEventListener('visibilitychange', onVisibility);
+            fn();
+            start();
+            return function () {
+                stop();
+                document.removeEventListener('visibilitychange', onVisibility);
+            };
+        };
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>

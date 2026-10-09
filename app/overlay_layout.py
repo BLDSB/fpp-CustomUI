@@ -57,7 +57,7 @@ def parse_display_map(text):
         if len(parts) < 5:
             continue
         try:
-            x, y, _z = int(parts[0]), int(parts[1]), int(parts[2])
+            x, y = int(parts[0]), int(parts[1])
             channel, count = int(parts[3]), int(parts[4])
         except ValueError:
             continue
@@ -164,7 +164,7 @@ def derive_composite_grid(models):
     for m in models:
         cols = _cluster([n[0] for n in m["nodes"]])
         rows = _cluster([n[1] for n in m["nodes"]])
-        for index, axis in ((cols, 0), (rows, 1)):
+        for index in (cols, rows):
             span = max(index) - min(index)
             steps = max(index.values())
             if steps > 0 and span > 0:

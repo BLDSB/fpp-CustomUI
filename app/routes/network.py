@@ -26,9 +26,11 @@ import ipaddress
 import re
 
 import requests
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify
 
 from app.auth_utils import login_required
+from app.fpp_api import fpp_url
+from app.validation import json_object
 
 network_bp = Blueprint("network", __name__)
 
@@ -59,17 +61,13 @@ _APPLY_TIMEOUT = 45     # `fppinit setupNetwork` restarts the interface
 _SCAN_TIMEOUT = 45      # a WiFi scan takes several seconds per band
 
 
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
-
-
 class FppError(Exception):
     """FPP could not be reached, or answered with something unusable."""
 
 
 def _fpp_get(path, timeout=_SHORT_TIMEOUT):
     try:
-        resp = requests.get(_fpp(path), timeout=timeout)
+        resp = requests.get(fpp_url(path), timeout=timeout)
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
@@ -79,7 +77,7 @@ def _fpp_get(path, timeout=_SHORT_TIMEOUT):
 
 def _fpp_post(path, payload, timeout=_SAVE_TIMEOUT):
     try:
-        resp = requests.post(_fpp(path), json=payload, timeout=timeout)
+        resp = requests.post(fpp_url(path), json=payload, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
@@ -323,6 +321,79 @@ def _carry_forward(iface, payload):
         payload["Leases"] = leases
 
 
+def _static_fields(data):
+    """``(ADDRESS/NETMASK dict, error)`` for a static-IP save."""
+    address = _str(data, "address", 45)
+    netmask = _str(data, "netmask", 45)
+    if not _valid_ip(address):
+        return None, "Enter a valid IP address, e.g. 192.168.1.50."
+    if not _valid_netmask(netmask):
+        return None, "Enter a valid subnet mask, e.g. 255.255.255.0."
+    return {"ADDRESS": address, "NETMASK": netmask}, None
+
+
+def _wireless_fields(data):
+    """``(SSID/PSK/... dict, error)`` for a wireless interface save."""
+    ssid = _str(data, "ssid", 64)
+    psk = _str(data, "psk", 64)
+    backup_ssid = _str(data, "backup_ssid", 64)
+    backup_psk = _str(data, "backup_psk", 64)
+    for problem in (
+        _check_ssid(ssid, "Network name (SSID)"),
+        _check_psk(psk, "The WiFi password"),
+        _check_ssid(backup_ssid, "Backup network name"),
+        _check_psk(backup_psk, "The backup WiFi password"),
+    ):
+        if problem:
+            return None, problem
+    return {
+        "SSID": ssid,
+        "PSK": psk,
+        "HIDDEN": 1 if data.get("hidden") else 0,
+        "WPA3": 1 if data.get("wpa3") else 0,
+        "BACKUPSSID": backup_ssid,
+        "BACKUPPSK": backup_psk,
+        "BACKUPHIDDEN": 1 if data.get("backup_hidden") else 0,
+        "BACKUPWPA3": 1 if data.get("backup_wpa3") else 0,
+    }, None
+
+
+def _route_metric_field(data):
+    """``(ROUTEMETRIC dict — empty when unset, error)``."""
+    metric = _str(data, "route_metric", 8)
+    if not metric:
+        return {}, None
+    try:
+        metric_value = int(metric)
+        if not 0 <= metric_value <= 9999:
+            raise ValueError
+    except ValueError:
+        return None, "Route metric must be a number from 0 to 9999."
+    return {"ROUTEMETRIC": metric_value}, None
+
+
+def _build_interface_payload(iface, data):
+    """The full document FPP expects for ``iface``, or ``(None, error)``."""
+    proto = _str(data, "proto", 16).lower()
+    if proto not in ("dhcp", "static"):
+        return None, "Addressing must be either DHCP or Static."
+
+    payload = {"INTERFACE": iface, "PROTO": proto}
+    sections = []
+    if proto == "static":
+        sections.append(_static_fields)
+    if iface.startswith("wl"):
+        sections.append(_wireless_fields)
+    sections.append(_route_metric_field)
+
+    for section in sections:
+        fields, error = section(data)
+        if error:
+            return None, error
+        payload.update(fields)
+    return payload, None
+
+
 @network_bp.post("/api/network/interface/<iface>")
 @login_required
 def save_interface(iface):
@@ -336,58 +407,10 @@ def save_interface(iface):
     if error:
         return jsonify({"error": error}), 400
 
-    data = request.get_json(silent=True) or {}
-    wireless = iface.startswith("wl")
-
-    proto = _str(data, "proto", 16).lower()
-    if proto not in ("dhcp", "static"):
-        return jsonify({"error": "Addressing must be either DHCP or Static."}), 400
-
-    payload = {"INTERFACE": iface, "PROTO": proto}
-
-    if proto == "static":
-        address = _str(data, "address", 45)
-        netmask = _str(data, "netmask", 45)
-        if not _valid_ip(address):
-            return jsonify({"error": "Enter a valid IP address, e.g. 192.168.1.50."}), 400
-        if not _valid_netmask(netmask):
-            return jsonify({"error": "Enter a valid subnet mask, e.g. 255.255.255.0."}), 400
-        payload["ADDRESS"] = address
-        payload["NETMASK"] = netmask
-
-    if wireless:
-        ssid = _str(data, "ssid", 64)
-        psk = _str(data, "psk", 64)
-        backup_ssid = _str(data, "backup_ssid", 64)
-        backup_psk = _str(data, "backup_psk", 64)
-        for problem in (
-            _check_ssid(ssid, "Network name (SSID)"),
-            _check_psk(psk, "The WiFi password"),
-            _check_ssid(backup_ssid, "Backup network name"),
-            _check_psk(backup_psk, "The backup WiFi password"),
-        ):
-            if problem:
-                return jsonify({"error": problem}), 400
-        payload.update({
-            "SSID": ssid,
-            "PSK": psk,
-            "HIDDEN": 1 if data.get("hidden") else 0,
-            "WPA3": 1 if data.get("wpa3") else 0,
-            "BACKUPSSID": backup_ssid,
-            "BACKUPPSK": backup_psk,
-            "BACKUPHIDDEN": 1 if data.get("backup_hidden") else 0,
-            "BACKUPWPA3": 1 if data.get("backup_wpa3") else 0,
-        })
-
-    metric = _str(data, "route_metric", 8)
-    if metric:
-        try:
-            metric_value = int(metric)
-            if not 0 <= metric_value <= 9999:
-                raise ValueError
-        except ValueError:
-            return jsonify({"error": "Route metric must be a number from 0 to 9999."}), 400
-        payload["ROUTEMETRIC"] = metric_value
+    data = json_object()
+    payload, error = _build_interface_payload(iface, data)
+    if error:
+        return jsonify({"error": error}), 400
 
     _carry_forward(iface, payload)
 
@@ -418,7 +441,7 @@ def save_interface(iface):
 @network_bp.post("/api/network/dns")
 @login_required
 def save_dns():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     dns1 = _str(data, "dns1", 45)
     dns2 = _str(data, "dns2", 45)
     for value, label in ((dns1, "Primary DNS"), (dns2, "Secondary DNS")):
@@ -436,7 +459,7 @@ def save_dns():
 @network_bp.post("/api/network/gateway")
 @login_required
 def save_gateway():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     gateway = _str(data, "gateway", 45)
     if gateway and not _valid_ip(gateway):
         return jsonify({"error": "The gateway must be a valid IP address, or blank."}), 400
@@ -494,7 +517,7 @@ def wifi_scan(iface):
 @login_required
 def save_tethering():
     """Write the hotspot settings. They are read at boot, so a reboot applies them."""
-    data = request.get_json(silent=True) or {}
+    data = json_object()
 
     mode = _str(data, "mode", 2)
     if mode not in TETHER_MODES:
@@ -513,7 +536,7 @@ def save_tethering():
     for key, value in (("TetherSSID", ssid), ("TetherPSK", psk), ("EnableTethering", mode)):
         try:
             resp = requests.put(
-                _fpp(f"/settings/{key}"),
+                fpp_url(f"/settings/{key}"),
                 data=value.encode("utf-8"),
                 headers={"Content-Type": "text/plain"},
                 timeout=_SAVE_TIMEOUT,

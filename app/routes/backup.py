@@ -22,12 +22,18 @@ from flask import Blueprint, Response, current_app, jsonify, request
 
 from app import fpp_backup
 from app.auth_utils import login_required
+from app.security import rate_limited
+from app.validation import json_object
 
 backup_bp = Blueprint("backup", __name__)
 
 # Chunks stay under the app-wide 8 MB MAX_CONTENT_LENGTH; the browser sends
 # 4 MB at a time (see settings.html).
 MAX_CHUNK = 6 * 1024 * 1024
+
+# No legitimate controller backup approaches this; it stops a runaway or
+# hostile upload from filling the SD card.
+MAX_ARCHIVE_BYTES = 16 * 1024 ** 3
 
 # Refuse an upload that could not be extracted afterwards. The archive itself
 # plus the files unpacked out of it need roughly twice its size free.
@@ -92,6 +98,7 @@ def backup_survey():
 
 @backup_bp.get("/api/backup/full")
 @login_required
+@rate_limited(10, 60)
 def backup_full():
     """Stream the full backup archive."""
     requested = (request.args.get("include") or "").split(",")
@@ -152,6 +159,9 @@ def restore_chunk():
     if len(data) > MAX_CHUNK:
         return jsonify({"error": "Chunk too large"}), 413
 
+    if offset < 0 or total < 0 or total > MAX_ARCHIVE_BYTES:
+        return jsonify({"error": "Invalid upload size"}), 400
+
     path = _upload_path(upload_id)
 
     if offset == 0:
@@ -177,6 +187,11 @@ def restore_chunk():
         return jsonify({"error": "Upload out of sync — start the restore again",
                         "expected_offset": current}), 409
 
+    # Never let the staged file grow past what the client declared (or the
+    # absolute cap when it declared nothing).
+    if current + len(data) > (total or MAX_ARCHIVE_BYTES):
+        return jsonify({"error": "Upload is larger than its declared size"}), 413
+
     try:
         with open(path, "ab") as fh:
             fh.write(data)
@@ -188,8 +203,9 @@ def restore_chunk():
 
 @backup_bp.post("/api/restore/apply")
 @login_required
+@rate_limited(5, 60)
 def restore_apply():
-    upload_id = ((request.get_json(silent=True) or {}).get("id") or "").lower()
+    upload_id = ((json_object()).get("id") or "").lower()
     if not _UPLOAD_ID_RE.match(upload_id):
         return jsonify({"error": "Invalid upload id"}), 400
 
@@ -199,7 +215,7 @@ def restore_apply():
 
     # Default on: restoring FPP's configuration leaves FPP showing a
     # "reboot required" banner, which is what the operator would do next anyway.
-    reboot = (request.get_json(silent=True) or {}).get("reboot", True)
+    reboot = (json_object()).get("reboot", True)
 
     try:
         return _apply_archive(path, reboot=bool(reboot))
@@ -230,6 +246,139 @@ def apply_archive_bytes(raw):
 
 
 # ── Restore: the actual work ─────────────────────────────────────────────────
+#
+# Each step appends ``(step, status, message)`` entries to ``log`` and catches
+# its own failures, so one broken area never blocks the ones after it.
+
+def _read_manifest(zf):
+    """The archive's manifest, or ``(None, error_response)`` if it is unusable."""
+    try:
+        manifest = json.loads(zf.read("manifest.json"))
+    except KeyError:
+        return None, (jsonify({
+            "error": "This zip has no manifest.json — it is not a Custom UI backup"
+        }), 400)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        return None, (jsonify({"error": f"Could not read the archive manifest: {exc}"}), 400)
+
+    if manifest.get("archive_version", 0) > fpp_backup.ARCHIVE_VERSION:
+        return None, (jsonify({
+            "error": "This backup was made by a newer version of the UI — "
+                     "update this controller before restoring it."
+        }), 400)
+    return manifest, None
+
+
+def _restore_media(zf, log):
+    try:
+        fpp_backup.extract_media(zf, log)
+    except Exception as exc:
+        current_app.logger.exception("Media restore failed")
+        log.append(("media", "error", f"Media files failed: {exc}"))
+
+
+def _restore_controller_config(zf, log):
+    names = zf.namelist()
+    config_member = fpp_backup.find_config_member(names)
+    if not config_member:
+        log.append(("controller_config", "skipped", "No controller configuration in this backup"))
+        return
+    try:
+        name = ""
+        name_member = fpp_backup.find_config_name_member(names)
+        if name_member:
+            name = zf.read(name_member).decode(errors="ignore").strip()
+        message = fpp_backup.restore_fpp_config(zf.read(config_member), name)
+        log.append(("controller_config", "ok", message))
+    except Exception as exc:
+        current_app.logger.exception("Controller config restore failed")
+        log.append(("controller_config", "error", f"Controller configuration failed: {exc}"))
+
+
+def _restore_ui_database(zf, log):
+    if "ui/backup.json" not in zf.namelist():
+        log.append(("ui", "skipped", "No UI data in this backup"))
+        return
+    from app.routes.settings import apply_ui_backup
+    try:
+        error = apply_ui_backup(json.loads(zf.read("ui/backup.json")))
+        if error:
+            log.append(("ui", "error", error))
+        else:
+            log.append(("ui", "ok", "Scenes, colors, playlists and settings restored"))
+    except Exception as exc:
+        current_app.logger.exception("UI restore failed")
+        log.append(("ui", "error", f"UI data failed: {exc}"))
+
+
+def _restore_branding(zf, log):
+    try:
+        fpp_backup.extract_uploads(zf, log)
+        fpp_backup.check_branding_images(log)
+    except Exception as exc:
+        log.append(("uploads", "error", f"Branding images failed: {exc}"))
+
+
+def _restore_identity(manifest, log):
+    """Restore the admin PIN and internal token (never the master PIN).
+
+    Returns the list of ``.env`` keys that were written.
+    """
+    identity = manifest.get("identity") or {}
+    restored_keys = []
+    for key in ("ADMIN_PASSWORD_HASH", "INTERNAL_TOKEN"):
+        value = identity.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        from app.routes.auth import write_env_key
+        error = write_env_key(key, value.strip())
+        if error:
+            log.append(("identity", "error", f"{key}: {error}"))
+        else:
+            restored_keys.append(key)
+    if restored_keys:
+        log.append(("identity", "ok", "Login PIN and internal token restored from the backup"))
+
+    # The token is baked into the FPP playlist URLs that the UI restore just
+    # wrote, so those have to be regenerated against the restored value.
+    if "INTERNAL_TOKEN" in restored_keys:
+        try:
+            from app import regenerate_all_playlists
+            regenerate_all_playlists(current_app)
+            log.append(("playlists", "ok", "Playlists rewritten with the restored token"))
+        except Exception as exc:
+            log.append(("playlists", "error", f"Could not rewrite playlists: {exc}"))
+    return restored_keys
+
+
+def _restore_ui_path(manifest, log):
+    """Move the UI back to its backed-up URL path; returns the new URL or None."""
+    wanted_path = (manifest.get("ui_path") or "").strip()
+    if not wanted_path:
+        return None
+    from app import ui_path as ui_path_mod
+    if wanted_path == ui_path_mod.current_path():
+        return None
+    error = ui_path_mod.apply(wanted_path)
+    if error:
+        log.append(("ui_path", "error", f"Could not move the UI to /{wanted_path}: {error}"))
+        return None
+    log.append(("ui_path", "ok", f"UI moved back to /{wanted_path}"))
+    return f"/{wanted_path}/"
+
+
+def _reboot_after_restore(log):
+    """Schedule a reboot; returns True if one was scheduled."""
+    from app.routes.settings import trigger_reboot
+    # Long enough for this response to reach the browser and be rendered
+    # before systemd starts tearing the service down.
+    error = trigger_reboot(delay=5, reason="a backup restore")
+    if error:
+        log.append(("reboot", "warning", f"Could not reboot automatically: {error}"))
+        return False
+    log.append(("reboot", "ok", "Rebooting the controller to finish applying the controller settings"))
+    return True
+
 
 def _apply_archive(path, reboot=False):
     """Unpack and apply a full backup archive.
@@ -251,124 +400,26 @@ def _apply_archive(path, reboot=False):
         return jsonify({"error": "That file is not a valid backup archive"}), 400
 
     with zf:
-        try:
-            manifest = json.loads(zf.read("manifest.json"))
-        except KeyError:
-            return jsonify({
-                "error": "This zip has no manifest.json — it is not a Custom UI backup"
-            }), 400
-        except (ValueError, zipfile.BadZipFile) as exc:
-            return jsonify({"error": f"Could not read the archive manifest: {exc}"}), 400
+        manifest, error_response = _read_manifest(zf)
+        if error_response:
+            return error_response
+        _restore_media(zf, log)
+        _restore_controller_config(zf, log)
+        _restore_ui_database(zf, log)
+        _restore_branding(zf, log)
 
-        if manifest.get("archive_version", 0) > fpp_backup.ARCHIVE_VERSION:
-            return jsonify({
-                "error": "This backup was made by a newer version of the UI — "
-                         "update this controller before restoring it."
-            }), 400
-
-        # 1. Media
-        try:
-            fpp_backup.extract_media(zf, log)
-        except Exception as exc:
-            current_app.logger.exception("Media restore failed")
-            log.append(("media", "error", f"Media files failed: {exc}"))
-
-        # 2. FPP's own configuration
-        names = zf.namelist()
-        config_member = fpp_backup.find_config_member(names)
-        if config_member:
-            try:
-                name = ""
-                name_member = fpp_backup.find_config_name_member(names)
-                if name_member:
-                    name = zf.read(name_member).decode(errors="ignore").strip()
-                message = fpp_backup.restore_fpp_config(zf.read(config_member), name)
-                log.append(("controller_config", "ok", message))
-            except Exception as exc:
-                current_app.logger.exception("Controller config restore failed")
-                log.append(("controller_config", "error", f"Controller configuration failed: {exc}"))
-        else:
-            log.append(("controller_config", "skipped", "No controller configuration in this backup"))
-
-        # 3. This plugin's database
-        if "ui/backup.json" in zf.namelist():
-            from app.routes.settings import apply_ui_backup
-            try:
-                error = apply_ui_backup(json.loads(zf.read("ui/backup.json")))
-                if error:
-                    log.append(("ui", "error", error))
-                else:
-                    log.append(("ui", "ok", "Scenes, colors, playlists and settings restored"))
-            except Exception as exc:
-                current_app.logger.exception("UI restore failed")
-                log.append(("ui", "error", f"UI data failed: {exc}"))
-        else:
-            log.append(("ui", "skipped", "No UI data in this backup"))
-
-        # 4. Branding images
-        try:
-            fpp_backup.extract_uploads(zf, log)
-            fpp_backup.check_branding_images(log)
-        except Exception as exc:
-            log.append(("uploads", "error", f"Branding images failed: {exc}"))
-
-    # 5. Identity — admin PIN and the internal token (never the master PIN)
-    identity = manifest.get("identity") or {}
-    restored_keys = []
-    for key in ("ADMIN_PASSWORD_HASH", "INTERNAL_TOKEN"):
-        value = identity.get(key)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        from app.routes.auth import write_env_key
-        error = write_env_key(key, value.strip())
-        if error:
-            log.append(("identity", "error", f"{key}: {error}"))
-        else:
-            restored_keys.append(key)
-    if restored_keys:
-        log.append(("identity", "ok", "Login PIN and internal token restored from the backup"))
-
-    # The token is baked into the FPP playlist URLs that step 3 just wrote, so
-    # those have to be regenerated against the restored value.
-    if "INTERNAL_TOKEN" in restored_keys:
-        try:
-            from app import regenerate_all_playlists
-            regenerate_all_playlists(current_app)
-            log.append(("playlists", "ok", "Playlists rewritten with the restored token"))
-        except Exception as exc:
-            log.append(("playlists", "error", f"Could not rewrite playlists: {exc}"))
-
-    # 6. URL path last — this moves the page the operator is looking at
-    new_url = None
-    wanted_path = (manifest.get("ui_path") or "").strip()
-    if wanted_path:
-        from app import ui_path as ui_path_mod
-        if wanted_path != ui_path_mod.current_path():
-            error = ui_path_mod.apply(wanted_path)
-            if error:
-                log.append(("ui_path", "error", f"Could not move the UI to /{wanted_path}: {error}"))
-            else:
-                new_url = f"/{wanted_path}/"
-                log.append(("ui_path", "ok", f"UI moved back to /{wanted_path}"))
+    _restore_identity(manifest, log)
+    # URL path last — this moves the page the operator is looking at
+    new_url = _restore_ui_path(manifest, log)
 
     failed = [entry for entry in log if entry[1] == "error"]
     reboot_recommended = any(s == "controller_config" and st == "ok" for s, st, _m in log)
 
-    # 7. Reboot, if asked and if FPP actually took a new configuration. FPP
+    # Reboot, if asked and if FPP actually took a new configuration. FPP
     # raises its own "reboot required" banner after a config restore, and
     # several of the areas it restores (channel outputs, the models written
     # above) only take effect on a restart.
-    rebooting = False
-    if reboot and reboot_recommended:
-        from app.routes.settings import trigger_reboot
-        # Long enough for this response to reach the browser and be rendered
-        # before systemd starts tearing the service down.
-        error = trigger_reboot(delay=5, reason="a backup restore")
-        if error:
-            log.append(("reboot", "warning", f"Could not reboot automatically: {error}"))
-        else:
-            rebooting = True
-            log.append(("reboot", "ok", "Rebooting the controller to finish applying the controller settings"))
+    rebooting = bool(reboot and reboot_recommended and _reboot_after_restore(log))
 
     return jsonify({
         "ok": not failed,

@@ -2,15 +2,17 @@ import re
 import threading
 
 import requests
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template
 
 from app import db
 from app.auth_utils import login_required
+from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb
 from app.models import (
     OVERLAY_MODELS, ColorButton, SavedColor, all_is_virtual, all_overlay_models,
     expand_overlay_models,
 )
 from app.routes.settings import selectable_zones
+from app.validation import json_object, page_args, str_field
 
 colors_bp = Blueprint("colors", __name__)
 
@@ -35,15 +37,6 @@ def mark_overlays_cleared():
         _all_fan_out_lit = False
 
 
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
-
-
-def _hex_to_rgb(hex_color):
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
 @colors_bp.get("/colors")
 @login_required
 def colors_page():
@@ -53,7 +46,7 @@ def colors_page():
 @colors_bp.post("/colors/send")
 @login_required
 def send_color():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     hex_val = data.get("hex", "")
     model = data.get("model", "All")
 
@@ -62,10 +55,10 @@ def send_color():
     if model not in OVERLAY_MODELS:
         return jsonify({"error": "Invalid overlay model"}), 400
 
-    r, g, b = _hex_to_rgb(hex_val)
+    r, g, b = hex_to_rgb(hex_val)
 
     try:
-        requests.get(_fpp("/playlists/stop"), timeout=5)
+        requests.get(fpp_url("/playlists/stop"), timeout=5)
     except requests.RequestException:
         pass
 
@@ -90,29 +83,36 @@ def send_color():
         for conflict in conflicts:
             try:
                 requests.put(
-                    _fpp(f"/overlays/model/{conflict}/state"),
+                    fpp_url(f"/overlays/model/{conflict}/state"),
                     json={"State": 0},
                     timeout=3,
                 )
             except requests.RequestException:
                 pass
 
-    try:
-        for target in targets:
+    def switch_on(models):
+        for target in models:
             requests.put(
-                _fpp(f"/overlays/model/{target}/state"),
+                fpp_url(f"/overlays/model/{target}/state"),
                 json={"State": 1},
                 timeout=5,
             ).raise_for_status()
 
             requests.put(
-                _fpp(f"/overlays/model/{target}/fill"),
+                fpp_url(f"/overlays/model/{target}/fill"),
                 json={"RGB": [r, g, b]},
                 timeout=5,
             ).raise_for_status()
+
+    try:
+        switch_on(targets)
+        # FPP sometimes ignores the first switch-on; confirm and repeat if so.
+        still_off = ensure_models_active(targets, switch_on)
     except requests.RequestException as exc:
         current_app.logger.error("FPP send color error: %s", exc)
         return jsonify({"error": "Could not send color to the controller"}), 502
+    if still_off:
+        return jsonify({"error": f"The controller did not switch on: {', '.join(still_off)}"}), 502
 
     return jsonify({"ok": True})
 
@@ -132,7 +132,7 @@ def _deactivate_all_overlays():
     for model in sorted(all_overlay_models()):
         try:
             resp = requests.put(
-                _fpp(f"/overlays/model/{model}/state"),
+                fpp_url(f"/overlays/model/{model}/state"),
                 json={"State": 0},
                 timeout=5,
             )
@@ -152,8 +152,8 @@ def _deactivate_all_overlays():
 @login_required
 def save_color():
     """Save a color and create a quick-access button for it in one step."""
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
+    data = json_object()
+    name = str_field(data, "name")
     hex_val = data.get("hex", "")
 
     if not name or len(name) > 64:
@@ -175,10 +175,12 @@ def save_color():
 @colors_bp.get("/colors/buttons")
 @login_required
 def list_buttons():
+    limit, offset = page_args()
     rows = (
         db.session.query(ColorButton, SavedColor)
         .join(SavedColor, ColorButton.saved_color_id == SavedColor.id)
         .order_by(ColorButton.id)
+        .limit(limit).offset(offset)
         .all()
     )
     return jsonify([

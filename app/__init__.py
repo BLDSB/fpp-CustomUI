@@ -106,6 +106,31 @@ def _add_missing_columns(app):
             app.logger.warning("Could not add column %s.%s: %s", table, column, exc)
 
 
+def _add_missing_indexes(app):
+    """Create the foreign-key indexes on tables that predate them.
+
+    ``create_all()`` builds indexes only for tables it creates, so a controller
+    upgrading from an older version keeps unindexed ``scene_zones.scene_id`` and
+    friends — every scene or playlist load then scans the whole child table.
+    Names match what SQLAlchemy generates for ``index=True``, so a fresh install
+    and an upgraded one end up identical. Keep entries forever.
+    """
+    wanted = [
+        # (index name, table, column)
+        ("ix_scene_zones_scene_id", "scene_zones", "scene_id"),
+        ("ix_custom_playlist_items_playlist_id", "custom_playlist_items", "playlist_id"),
+        ("ix_color_buttons_saved_color_id", "color_buttons", "saved_color_id"),
+    ]
+    from sqlalchemy import text
+    for name, table, column in wanted:
+        try:
+            db.session.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})"))
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            app.logger.warning("Could not create index %s: %s", name, exc)
+
+
 def _drop_removed_columns(app):
     """Drop columns whose feature has been removed from the app.
 
@@ -260,14 +285,8 @@ def _deferred_fpp_init(app):
     _logger.info("Deferred FPP startup sync complete")
 
 
-def create_app():
-    app = Flask(__name__, template_folder="../templates")
-
-    from app.config import Config
-    app.config.from_object(Config)
-
-    db.init_app(app)
-
+def _log_startup_config(app):
+    """Log the effective configuration (never the secrets themselves)."""
     app.logger.info(
         "fpp-ui starting: FPP_BASE_URL=%s UI_PATH=/%s DB=%s admin_pin=%s master_pin=%s internal_token=%s",
         app.config.get("FPP_BASE_URL"),
@@ -278,24 +297,9 @@ def create_app():
         "set" if app.config.get("INTERNAL_TOKEN") else "UNSET — scheduled scenes/effects will fail",
     )
 
-    with app.app_context():
-        from app import models  # noqa: F401
-        try:
-            db.create_all()
-        except Exception:
-            # Keep the service up (and its log readable over Dataplicity)
-            # instead of crash-looping under systemd; requests that need the
-            # DB will fail loudly until the underlying problem is fixed.
-            app.logger.exception(
-                "Could not initialize the database — is the instance/ directory "
-                "writable and the disk not full? The UI will return errors until "
-                "this is fixed."
-            )
-        _add_missing_columns(app)
-        _drop_removed_columns(app)
-        _lift_legacy_effect_brightness(app)
-        _create_turn_off_lights_preset(app)
 
+def _register_blueprints(app):
+    """Attach every route blueprint to the app."""
     from app.routes import main as main_blueprint
     app.register_blueprint(main_blueprint)
 
@@ -332,8 +336,12 @@ def create_app():
     from app.routes.network import network_bp
     app.register_blueprint(network_bp)
 
-    # Background workers (daemon threads — zero cost when idle). The FPP
-    # startup sync waits for fppd to come up before talking to it.
+
+def _start_background_workers(app):
+    """Start the daemon threads (FPP startup sync, alert monitor).
+
+    Skipped in the Werkzeug reloader's parent process so debug mode does not
+    start them twice."""
     if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         threading.Thread(
             target=_deferred_fpp_init, args=(app,), daemon=True,
@@ -342,33 +350,9 @@ def create_app():
         from app.alert_monitor import start_monitor
         start_monitor(app)
 
-    @app.before_request
-    def _require_provisioning():
-        """Funnel a fresh install to the first-run setup page.
 
-        Enforced on every request rather than relying on the redirect alone, so
-        a stale session cookie cannot skip the claim.
-        """
-        from app.routes.auth import is_unprovisioned
-
-        # FPP playlist callbacks authenticate by INTERNAL_TOKEN, not by session,
-        # so they must keep working regardless of provisioning state — otherwise
-        # clearing the PIN on a configured Pi would break every scene playlist.
-        if request.path.startswith("/internal/"):
-            return None
-        # Let unknown paths 404 normally instead of redirecting to setup.
-        if request.endpoint is None:
-            return None
-        if request.endpoint in ("static", "auth.setup"):
-            return None
-        if is_unprovisioned():
-            return redirect(url_for("auth.setup"))
-        return None
-
-    # Allow the app to run behind a reverse proxy at a sub-path (e.g. /CustomUI).
-    # Apache sets X-Forwarded-Prefix so url_for() generates correct links.
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_prefix=1)
-
+def _register_template_and_error_handlers(app):
+    """Install the site-settings context processor and the 500 handler."""
     @app.context_processor
     def inject_site_settings():
         from app.models import AppSetting
@@ -398,5 +382,71 @@ def create_app():
         if request.path.startswith("/api/") or request.path.startswith("/internal/"):
             return jsonify({"error": "Internal server error — check fpp-ui.log on the controller"}), 500
         return "Internal server error — check fpp-ui.log on the controller.", 500
+
+
+def create_app():
+    """Application factory: configure, initialise the DB, register routes, start workers."""
+    app = Flask(__name__, template_folder="../templates")
+
+    from app.config import Config
+    app.config.from_object(Config)
+
+    db.init_app(app)
+
+    _log_startup_config(app)
+
+    with app.app_context():
+        from app import models  # noqa: F401
+        try:
+            db.create_all()
+        except Exception:
+            # Keep the service up (and its log readable over Dataplicity)
+            # instead of crash-looping under systemd; requests that need the
+            # DB will fail loudly until the underlying problem is fixed.
+            app.logger.exception(
+                "Could not initialize the database — is the instance/ directory "
+                "writable and the disk not full? The UI will return errors until "
+                "this is fixed."
+            )
+        _add_missing_columns(app)
+        _drop_removed_columns(app)
+        _add_missing_indexes(app)
+        _lift_legacy_effect_brightness(app)
+        _create_turn_off_lights_preset(app)
+
+    _register_blueprints(app)
+    from app.security import init_security
+    init_security(app)
+
+    _start_background_workers(app)
+
+    @app.before_request
+    def _require_provisioning():
+        """Funnel a fresh install to the first-run setup page.
+
+        Enforced on every request rather than relying on the redirect alone, so
+        a stale session cookie cannot skip the claim.
+        """
+        from app.routes.auth import is_unprovisioned
+
+        # FPP playlist callbacks authenticate by INTERNAL_TOKEN, not by session,
+        # so they must keep working regardless of provisioning state — otherwise
+        # clearing the PIN on a configured Pi would break every scene playlist.
+        if request.path.startswith("/internal/"):
+            return None
+        # Let unknown paths 404 normally instead of redirecting to setup.
+        if request.endpoint is None:
+            return None
+        if request.endpoint in ("static", "auth.setup"):
+            return None
+        if is_unprovisioned():
+            return redirect(url_for("auth.setup"))
+        return None
+
+    # Allow the app to run behind a reverse proxy at a sub-path (e.g. /CustomUI).
+    # Apache sets X-Forwarded-Prefix so url_for() generates correct links.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_prefix=1)
+
+    _register_template_and_error_handlers(app)
 
     return app

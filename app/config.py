@@ -33,6 +33,14 @@ if not _secret or _secret == "change-me-in-production":
 
 _db_uri = os.environ.get("DATABASE_URL", "sqlite:///fpp_ui.db")
 
+# Extra host[:port] values (comma-separated) that may POST to the UI — only
+# needed behind a proxy that rewrites both Host and X-Forwarded-Host.
+_trusted_origins = tuple(
+    h.strip().lower()
+    for h in os.environ.get("TRUSTED_ORIGINS", "").split(",")
+    if h.strip()
+)
+
 
 class Config:
     SECRET_KEY = _secret
@@ -41,6 +49,11 @@ class Config:
     MASTER_PIN_HASH = os.environ.get("MASTER_PIN_HASH", "")
     SQLALCHEMY_DATABASE_URI = _db_uri
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Lax keeps the session cookie off cross-site POSTs; HttpOnly keeps it away
+    # from page scripts. (Not Secure: the controller is served over plain HTTP.)
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_HTTPONLY = True
+    TRUSTED_ORIGINS = _trusted_origins
     # The alert-monitor thread and request threads share the SQLite file; a
     # longer busy timeout stops "database is locked" errors under write overlap.
     if _db_uri.startswith("sqlite"):

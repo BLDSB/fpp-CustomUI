@@ -1,4 +1,3 @@
-import hmac
 import json
 from urllib.parse import quote
 
@@ -6,10 +5,12 @@ import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import db
-from app.auth_utils import login_required
+from app.auth_utils import internal_token_error, login_required
+from app.fpp_api import ensure_models_active, fpp_error_text, fpp_url, playlist_url
 from app.fpp_playlist import build_playlist_def, effect_entries
 from app.models import EffectPreset, expand_overlay_models
 from app.routes.settings import selectable_zones
+from app.validation import json_object, page_args
 
 effects_bp = Blueprint("effects", __name__)
 
@@ -65,10 +66,6 @@ def lift_legacy_brightness(effect_name, args):
     return lifted
 
 
-def _fpp(path):
-    return f"{current_app.config['FPP_BASE_URL']}{path}"
-
-
 def _playlist_name(preset_name):
     return f"Effect - {preset_name}"
 
@@ -83,22 +80,37 @@ def _str_list(value):
     return [str(v) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
 
 
-def _send_effect(models, effect, args):
-    """Push an 'Overlay Model Effect' command to FPP. Returns (ok, error)."""
+def _post_effect(targets, effect, args):
+    """POST one 'Overlay Model Effect' command naming ``targets``."""
     command = {
         "command": "Overlay Model Effect",
         "multisyncCommand": False,
         "multisyncHosts": "",
-        "args": [",".join(expand_overlay_models(models)), "Enabled", effect]
-                + [str(a) for a in args],
+        "args": [",".join(targets), "Enabled", effect] + [str(a) for a in args],
     }
+    requests.post(fpp_url("/command"), json=command, timeout=10).raise_for_status()
+
+
+def _send_effect(models, effect, args):
+    """Push an 'Overlay Model Effect' command to FPP. Returns (ok, error)."""
+    targets = expand_overlay_models(models)
     try:
-        resp = requests.post(_fpp("/command"), json=command, timeout=10)
-        resp.raise_for_status()
-        return True, None
+        _post_effect(targets, effect, args)
+
+        def start_again(off):
+            try:
+                _post_effect(off, effect, args)
+            except requests.RequestException as exc:
+                current_app.logger.error("FPP re-run effect error: %s", exc)
+
+        # FPP sometimes ignores the first start after a reset; confirm and repeat.
+        still_off = ensure_models_active(targets, start_again)
     except requests.RequestException as exc:
         current_app.logger.error("FPP run effect error: %s", exc)
-        return False, str(exc)
+        return False, fpp_error_text(exc)
+    if still_off:
+        return False, f"The controller did not start the effect on: {', '.join(still_off)}"
+    return True, None
 
 
 def _run_preset(preset):
@@ -120,7 +132,7 @@ def _write_effect_playlist(preset):
     )
     try:
         requests.post(
-            _fpp(f"/playlist/{_playlist_name(preset.name)}"),
+            playlist_url(_playlist_name(preset.name)),
             json=playlist_def,
             timeout=5,
         ).raise_for_status()
@@ -132,7 +144,7 @@ def _write_effect_playlist(preset):
 
 def _delete_effect_playlist(preset):
     try:
-        requests.delete(_fpp(f"/playlist/{_playlist_name(preset.name)}"), timeout=5)
+        requests.delete(playlist_url(_playlist_name(preset.name)), timeout=5)
     except requests.RequestException:
         pass
 
@@ -155,12 +167,12 @@ def effects_page():
 @login_required
 def list_effects():
     try:
-        resp = requests.get(_fpp("/overlays/effects"), timeout=10)
+        resp = requests.get(fpp_url("/overlays/effects"), timeout=10)
         resp.raise_for_status()
         effects = resp.json()
     except Exception as exc:
         current_app.logger.error("FPP list effects error: %s", exc)
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
     if not isinstance(effects, list):
         current_app.logger.warning("FPP /overlays/effects returned non-list payload")
@@ -192,30 +204,30 @@ def get_effect_args(effect_name):
         return jsonify({"error": "Invalid effect name"}), 400
     try:
         resp = requests.get(
-            _fpp(f"/overlays/effects/{quote(effect_name, safe='')}"), timeout=10
+            fpp_url(f"/overlays/effects/{quote(effect_name, safe='')}"), timeout=10
         )
         resp.raise_for_status()
         return jsonify(resp.json())
     except Exception as exc:
         current_app.logger.error("FPP effect args error for %r: %s", effect_name, exc)
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @effects_bp.get("/api/effects/fonts")
 @login_required
 def get_fonts():
     try:
-        resp = requests.get(_fpp("/overlays/fonts"), timeout=10)
+        resp = requests.get(fpp_url("/overlays/fonts"), timeout=10)
         resp.raise_for_status()
         return jsonify(resp.json())
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({"error": fpp_error_text(exc)}), 502
 
 
 @effects_bp.post("/api/effects/run")
 @login_required
 def run_effect():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     models    = _str_list(data.get("models"))
     effect    = str(data.get("effect", "")).strip()
     args      = data.get("args", [])
@@ -236,7 +248,7 @@ def run_effect():
 @effects_bp.post("/api/effects/stop")
 @login_required
 def stop_effect():
-    data      = request.get_json(silent=True) or {}
+    data      = json_object()
     models    = _str_list(data.get("models")) or []
 
     model_str = ",".join(expand_overlay_models(models)) if models else "All"
@@ -247,23 +259,25 @@ def stop_effect():
         "args": [model_str, "Enabled", "Stop Effects"],
     }
     try:
-        resp = requests.post(_fpp("/command"), json=command, timeout=10)
+        resp = requests.post(fpp_url("/command"), json=command, timeout=10)
         resp.raise_for_status()
         return jsonify({"ok": True})
     except Exception as exc:
-        return jsonify({"error": f"Could not stop effects: {exc}"}), 502
+        return jsonify({"error": f"Could not stop effects: {fpp_error_text(exc)}"}), 502
 
 
 @effects_bp.get("/api/effects/presets")
 @login_required
 def list_presets():
-    return jsonify([p.to_dict() for p in EffectPreset.query.order_by(EffectPreset.id).all()])
+    limit, offset = page_args()
+    rows = EffectPreset.query.order_by(EffectPreset.id).limit(limit).offset(offset).all()
+    return jsonify([p.to_dict() for p in rows])
 
 
 @effects_bp.post("/api/effects/presets")
 @login_required
 def save_preset():
-    data = request.get_json(silent=True) or {}
+    data = json_object()
     name = str(data.get("name") or "").strip()[:64]
     if not name:
         return jsonify({"error": "Name required"}), 400
@@ -311,13 +325,9 @@ def internal_apply_effect(preset_id):
     effect do not linger on models this preset does not drive.  Used by built
     playlists; off by default so standalone effect playlists are unchanged.
     """
-    token = request.args.get("token", "")
-    internal_token = current_app.config.get("INTERNAL_TOKEN", "")
-
-    if not internal_token:
-        return jsonify({"error": "Internal token not configured"}), 503
-    if not hmac.compare_digest(token, internal_token):
-        return jsonify({"error": "Forbidden"}), 403
+    denied = internal_token_error()
+    if denied:
+        return denied
 
     preset = db.session.get(EffectPreset, preset_id)
     if not preset:
