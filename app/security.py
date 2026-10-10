@@ -53,6 +53,19 @@ def _is_local_host(host):
         return name == "localhost" or name.endswith(".local") or "." not in name
 
 
+def _is_dataplicity_host(host):
+    """True for a Dataplicity wormhole address (``name.dataplicity.io``).
+
+    Dataplicity rewrites the Host header on its way to the Pi, so neither Host
+    nor X-Forwarded-Host ever names the address the operator typed. Every unit
+    this plugin ships on is reached that way, so the suffix is trusted outright
+    instead of needing a per-unit TRUSTED_ORIGINS entry. Port is ignored; the
+    scheme is not part of the host, but a browser only sends these over https.
+    """
+    name = host.rsplit(":", 1)[0]
+    return name == "dataplicity.io" or name.endswith(".dataplicity.io")
+
+
 def _behind_proxy_without_host():
     """True when Apache forwarded the request but did not say which host the
     browser used (the Host header is the loopback address Flask listens on)."""
@@ -78,7 +91,7 @@ def _csrf_blocked():
     if not origin:
         return False
     origin_host = _host_of(origin)
-    if origin_host in _allowed_hosts():
+    if origin_host in _allowed_hosts() or _is_dataplicity_host(origin_host):
         return False
     # Apache on a stock install does not pass the browser's Host through, so the
     # Origin cannot be compared with anything. Fall back to "the page that sent
