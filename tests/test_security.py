@@ -86,6 +86,24 @@ class Csrf(SecurityCase):
             r = self.client.post("/api/change-pin", headers={"Origin": origin, "Host": "127.0.0.1:5000"})
             self.assertEqual(r.status_code, 403, origin)
 
+    def test_dataplicity_origin_is_accepted(self):
+        """Dataplicity rewrites Host, so the wormhole address never matches it."""
+        self.login()
+        for host in ("127.0.0.1:5000", "localhost"):
+            r = self.client.post(
+                "/api/change-pin",
+                headers={"Origin": "https://dowerless-seal-6034.dataplicity.io", "Host": host},
+            )
+            self.assertNotEqual(r.status_code, 403, host)
+
+    def test_lookalike_dataplicity_origins_are_refused(self):
+        self.login()
+        for origin in ("https://dataplicity.io.evil.example", "https://evildataplicity.io",
+                       "https://dataplicity.io.attacker.com:443"):
+            r = self.client.post("/api/change-pin",
+                                 headers={"Origin": origin, "Host": "127.0.0.1:5000"})
+            self.assertEqual(r.status_code, 403, origin)
+
     def test_get_is_never_blocked(self):
         self.login()
         r = self.client.get("/api/zones", headers={"Origin": "http://evil.example"})
