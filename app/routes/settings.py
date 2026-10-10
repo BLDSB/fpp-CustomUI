@@ -101,7 +101,7 @@ def save_settings():
 
         if key in ("accent_color", "nav_color", "nav_link_color", "text_color") and value:
             if not _COLOR_RE.match(value):
-                return jsonify({"error": f"Invalid color for '{key}' — must be a 6-digit hex color like #e94560"}), 400
+                return jsonify({"error": f"Invalid color for '{key}' — must be a 6-digit hex color like #3eb300"}), 400
 
         # Numeric settings feed the alert monitor thread — reject garbage here
         # so a typo can't silently break alerting every poll cycle.
