@@ -19,7 +19,7 @@ A mobile-friendly, password-protected control panel for [Falcon Pi Player](https
 
 ## Requirements
 
-- Raspberry Pi running **FPP 8.x or later** (tested on FPP 9.5)
+- Raspberry Pi running **FPP 9.x or later** (tested on FPP 9.5)
 - Python 3.9 or higher (pre-installed on all FPP OS images)
 - Must run **on the same Pi as FPP**
 
@@ -142,4 +142,4 @@ sudo systemctl restart fpp-ui
 
 ## Compatibility
 
-Tested on FPP 9.5.3, Raspberry Pi 4, Raspberry Pi OS (Debian 12). The FPP REST API used is stable across FPP 8.x and 9.x.
+Tested on FPP 9.5.3, Raspberry Pi 4, Raspberry Pi OS (Debian 12).
