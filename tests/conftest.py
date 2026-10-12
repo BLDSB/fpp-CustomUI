@@ -152,6 +152,25 @@ def fpp():
         p.stop()
 
 
+REAL = {}
+
+
+@pytest.fixture(autouse=True)
+def _terms_accepted(monkeypatch):
+    """Most tests are about something other than the Terms gate, so treat the
+    Terms as accepted. test_terms.py puts the real check back with ``real_terms``."""
+    from app import terms
+    REAL.setdefault("terms_accepted", terms.terms_accepted)
+    monkeypatch.setattr(terms, "terms_accepted", lambda: True)
+
+
+@pytest.fixture
+def real_terms(monkeypatch, _terms_accepted):
+    from app import terms
+    monkeypatch.setattr(terms, "terms_accepted", REAL["terms_accepted"])
+    return terms
+
+
 @pytest.fixture
 def app_factory():
     """Build isolated apps (own in-memory DB); use ``provisioned=False`` for first-run."""

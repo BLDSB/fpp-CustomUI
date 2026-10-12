@@ -20,9 +20,15 @@ def index():
 
 
 @main.get("/terms")
-@login_required
 def terms():
-    return render_template("terms.html")
+    # Public on purpose: it has to be readable before anyone can log in and
+    # agree to it. A fully signed-in user gets the normal page chrome.
+    from flask import session
+    from app import terms as terms_record
+
+    if session.get("logged_in") and terms_record.terms_accepted():
+        return render_template("terms.html")
+    return render_template("terms_public.html")
 
 
 def _stored_brightness():

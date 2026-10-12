@@ -187,6 +187,12 @@
         }
         .key-primary:hover  { background: var(--accent); border-color: var(--accent); filter: brightness(1.1); }
         .key.key-disabled   { opacity: 0.4; pointer-events: none; }
+        .agree-row {
+            display: flex; gap: 0.6rem; align-items: flex-start;
+            font-size: 0.82rem; line-height: 1.4; cursor: pointer;
+        }
+        .agree-row input { width: 1.2rem; height: 1.2rem; flex: none; margin-top: 0.05rem; accent-color: var(--accent); }
+        .agree-row a { color: var(--accent); }
     </style>
 </head>
 <body>
@@ -228,6 +234,7 @@
                 <input type="password" id="pin-input"     name="pin"     autocomplete="off">
                 <input type="password" id="confirm-input" name="confirm" autocomplete="off">
                 <input type="text"     id="ui-path-input" name="ui_path" autocomplete="off">
+                <input type="hidden"   id="agree-input"   name="agree"   value="">
             </form>
 
             <!-- Step 3: optionally move this install off the default URL -->
@@ -237,6 +244,11 @@
                        autocapitalize="off" autocorrect="off" spellcheck="false"
                        aria-label="Name for this controller's web address">
                 <div class="name-preview" id="name-preview"></div>
+                <label class="agree-row">
+                    <input type="checkbox" id="agree-check">
+                    <span>I have read and agree to the
+                        <a href="{{ url_for('main.terms') }}" target="_blank" rel="noopener">Terms of Service</a>.</span>
+                </label>
                 <div class="name-actions">
                     <button class="key" id="name-skip" type="button">Skip</button>
                     <button class="key key-primary" id="name-go" type="button">Finish</button>
@@ -285,6 +297,8 @@
         const nameGo    = document.getElementById('name-go');
         const nameSkip  = document.getElementById('name-skip');
         const subText   = document.querySelector('.setup-sub');
+        const agreeCheck = document.getElementById('agree-check');
+        const agreeInput = document.getElementById('agree-input');
         const NAME_RE   = /^[A-Za-z0-9_-]{1,32}$/;
         // Rendered from app/ui_path.py so the two never drift.
         const RESERVED  = {{ reserved_paths|tojson }};
@@ -382,19 +396,29 @@
             } else {
                 namePrev.innerHTML = 'Will be at <b>' + location.origin + '/' + value + '</b>';
             }
-            nameGo.classList.toggle('key-disabled', !!problem);
+            syncFinishButtons(!!problem);
+        }
+
+        // Finish and Skip both complete setup, so both wait for the agreement.
+        function syncFinishButtons(hasProblem) {
+            const blocked = !agreeCheck.checked;
+            nameGo.classList.toggle('key-disabled', !!hasProblem || blocked);
+            nameSkip.classList.toggle('key-disabled', blocked);
         }
 
         function finishSetup() {
             const value = nameField.value.trim();
+            if (!agreeCheck.checked) return;
             if (value && nameProblem(value)) return;
             pathInput.value = value;
+            agreeInput.value = '1';
             nameGo.textContent = 'Working…';
             nameGo.classList.add('key-disabled');
             nameSkip.classList.add('key-disabled');
             form.submit();
         }
 
+        agreeCheck.addEventListener('change', updateNamePreview);
         nameField.addEventListener('input', updateNamePreview);
         nameGo.addEventListener('click', finishSetup);
         nameSkip.addEventListener('click', function () {
