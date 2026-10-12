@@ -164,6 +164,14 @@
         border-color: var(--accent);
     }
 
+    /* Calendar/clock picker icons default to dark grey; lighten to match the text */
+    .form-group input[type="date"]::-webkit-calendar-picker-indicator,
+    .form-group input[type="time"]::-webkit-calendar-picker-indicator {
+        filter: invert(1) brightness(0.9);
+        opacity: 1;
+        cursor: pointer;
+    }
+
     /* Day checkboxes */
     .day-grid {
         display: flex;
