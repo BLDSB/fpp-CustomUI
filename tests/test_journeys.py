@@ -268,7 +268,7 @@ def test_restore_rejects_garbage(client, fpp):
 
 # ── 6. Pages render ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("path", ["/", "/colors", "/effects", "/schedule", "/playlists", "/settings"])
+@pytest.mark.parametrize("path", ["/", "/colors", "/effects", "/schedule", "/playlists", "/settings", "/terms"])
 def test_every_main_page_loads_when_signed_in(client, fpp, path):
     resp = client.get(path)
     assert resp.status_code == 200, path

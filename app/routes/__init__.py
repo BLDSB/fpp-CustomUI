@@ -19,6 +19,12 @@ def index():
     return render_template("home.html")
 
 
+@main.get("/terms")
+@login_required
+def terms():
+    return render_template("terms.html")
+
+
 def _stored_brightness():
     """Saved brightness, clamped to 0-100; 100 if unset, corrupt, or DB down."""
     try:

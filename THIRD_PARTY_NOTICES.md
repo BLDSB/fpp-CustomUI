@@ -19,13 +19,13 @@ Animated effects are rendered by FPP's effects engine, including effects
 derived from the [WLED](https://github.com/wled/WLED) project. They are
 provided by FPP and are not part of BLD's code.
 
-**Controllers delivered by BLD with FPP pre-installed:** FPP, the operating
+**Controllers delivered with FPP pre-installed (by BLD or an Authorized Reseller):** FPP, the operating
 system, and other software on the controller are distributed under their own
 open source licenses. GPLv2 text: <https://www.gnu.org/licenses/old-licenses/gpl-2.0.html>.
 For at least three years from delivery, BLD will provide the complete
 corresponding source code for the FPP version delivered to anyone who asks, for
 a charge no more than the cost of physically performing the distribution.
-Request it at info@blacklightdesigns.com. The same source is published at
+Request it from BLD at info@blacklightdesigns.com; resellers must pass this offer on to their customers. The same source is published at
 <https://github.com/FalconChristmas/fpp>.
 
 ## Python libraries
