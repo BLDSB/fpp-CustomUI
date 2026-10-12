@@ -100,6 +100,14 @@ def _load_settings(app):
         return {s.key: s.value for s in AppSetting.query.all()}
 
 
+def _label(settings: dict, subject: str, body: str) -> tuple[str, str]:
+    """Stamp the Site Name (which identifies the controller) onto an outgoing email's subject and body."""
+    name = (settings.get("site_name") or "").strip()
+    if not name:
+        return subject, body
+    return f"[{name}] {subject}", f"Controller: {name}\n\n{body}"
+
+
 # Alerts can go to more than one person. Each of these settings holds one
 # recipient, but we still split on commas/semicolons so a list pasted into a
 # single box (the way the old single-recipient field was often used) works.
@@ -422,6 +430,7 @@ def _send_email(settings: dict, subject: str, body: str, kind: str = "missed") -
         _logger.warning("Alert monitor: email not configured, or no one wants '%s' emails — skipping", kind)
         return False
 
+    subject, body = _label(settings, subject, body)
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"]    = from_addr
@@ -466,11 +475,14 @@ def send_test_email(app) -> tuple[bool, str]:
     if not all([host, user, password]) or not to_addrs:
         return False, "Email not fully configured — fill in all fields and save first."
 
-    msg = MIMEText(
+    subject, body = _label(
+        settings,
+        "Show Alert — Test Message",
         "This is a test alert from your lighting control UI.\n\n"
-        "If you received this, email alerts are working correctly."
+        "If you received this, email alerts are working correctly.",
     )
-    msg["Subject"] = "Show Alert — Test Message"
+    msg = MIMEText(body)
+    msg["Subject"] = subject
     msg["From"]    = from_addr
     msg["To"]      = ", ".join(to_addrs)
 
