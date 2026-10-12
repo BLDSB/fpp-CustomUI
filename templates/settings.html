@@ -25,6 +25,10 @@
         border-bottom: 1px solid var(--border-dim);
     }
 
+    .settings-footer { text-align: center; font-size: 0.78rem; margin: 0.25rem 0 0; }
+    .settings-footer a { color: var(--text-dim); text-decoration: underline; }
+    .settings-footer a:hover { color: var(--accent); }
+
     .form-field { display: flex; flex-direction: column; gap: 0.3rem; }
     .form-field label { font-size: 0.82rem; color: var(--text-dim); }
     .form-field input[type="text"],
@@ -983,6 +987,8 @@
             <button id="btn-reboot-pi" class="btn-save btn-danger">Reboot Controller</button>
         </div>
     </div>
+
+    <p class="settings-footer"><a href="{{ url_for('main.terms') }}">Terms of Service</a></p>
 
 </div>
 
