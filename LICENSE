@@ -1,0 +1,60 @@
+BLACK LIGHT DESIGNS SOURCE-AVAILABLE LICENSE
+
+Software: Architectural Lighting Control Interface (the "Custom Web UI" FPP
+plugin, repository "fpp-CustomUI") and its accompanying documentation
+(the "Software").
+
+Copyright (c) 2026 Black Light Designs LLC, Fort Worth, Texas. All rights
+reserved.
+
+THIS IS NOT AN OPEN SOURCE LICENSE.
+
+1. SOURCE IS VISIBLE, NOT FREE TO USE
+
+   The source code of the Software is published so that licensees can read it
+   and install and update it through Falcon Player's Plugin Manager. Being able
+   to see or download the source code does not grant you a license to use it.
+
+2. WHAT YOU MAY DO WITHOUT A SEPARATE AGREEMENT
+
+   Anyone may, free of charge:
+
+   (a) view and read the source code, for example to evaluate or understand it;
+   (b) use the features GitHub's Terms of Service give every user of a public
+       repository, such as viewing and forking it on GitHub for the purpose of
+       proposing changes back to Black Light Designs LLC ("BLD").
+
+3. WHAT REQUIRES A LICENSE FROM BLD
+
+   Installing, running, or otherwise using the Software on any controller
+   requires a valid license from BLD. Licensed use is governed by the BLD
+   Software Terms of Service that accompany your license or quote (the
+   "Terms"), which control if they differ from this file.
+
+4. WHAT IS NOT PERMITTED
+
+   Except as the Terms or section 2 allow, you may not copy, modify, publish,
+   sublicense, sell, or redistribute the Software or any part of it, and you may
+   not use the source code to build another product or service.
+
+5. THIRD-PARTY SOFTWARE
+
+   The Software relies on third-party software that is licensed separately under
+   its own terms, including Falcon Player (FPP) and the Python libraries listed
+   in THIRD_PARTY_NOTICES.md. Nothing in this file or the Terms limits any
+   rights those licenses give you. This license covers only the code and
+   documentation written by BLD.
+
+6. NO WARRANTY
+
+   Except for any warranty stated in your Terms, THE SOFTWARE IS PROVIDED "AS
+   IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+   NON-INFRINGEMENT. BLD'S LIABILITY IS LIMITED AS STATED IN THE TERMS.
+
+7. TERMINATION
+
+   Any use outside this license ends your rights under it automatically.
+
+Questions or license requests: info@blacklightdesigns.com
+Black Light Designs LLC - blacklightdesigns.com
