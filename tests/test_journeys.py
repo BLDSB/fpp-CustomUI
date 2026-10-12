@@ -51,7 +51,7 @@ def test_first_run_setup_then_login(app_factory, fpp, pin_hash):
         app.config[key] = value
 
     with mock.patch("app.routes.auth.write_env_key", side_effect=fake_write):
-        resp = client.post("/setup", data={"pin": "4321", "confirm": "4321"})
+        resp = client.post("/setup", data={"pin": "4321", "confirm": "4321", "agree": "1"})
     assert resp.status_code == 302
     assert client.get("/api/zones").status_code == 200          # session works
     assert bcrypt.checkpw(b"4321", app.config["ADMIN_PASSWORD_HASH"].encode())
@@ -63,7 +63,7 @@ def test_first_run_setup_then_login(app_factory, fpp, pin_hash):
 def test_setup_rejects_mismatched_pins(app_factory, fpp):
     app = app_factory(provisioned=False)
     client = app.test_client()
-    resp = client.post("/setup", data={"pin": "1234", "confirm": "9999"})
+    resp = client.post("/setup", data={"pin": "1234", "confirm": "9999", "agree": "1"})
     assert resp.status_code == 200
     assert b"did not match" in resp.data
     assert app.config["ADMIN_PASSWORD_HASH"] == ""

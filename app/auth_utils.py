@@ -9,6 +9,14 @@ def login_required(f):
     def decorated_function(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("auth.login"))
+        # Imported here: app.terms pulls in the models, which import this module.
+        from app import terms
+
+        if not terms.terms_accepted():
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Accept the Terms of Service to continue.",
+                                "terms_required": True}), 403
+            return redirect(url_for("auth.accept_terms"))
         return f(*args, **kwargs)
 
     return decorated_function

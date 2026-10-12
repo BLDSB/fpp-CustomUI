@@ -9,6 +9,7 @@ from dotenv import set_key
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from app.auth_utils import login_required
+from app import terms
 from app import ui_path as ui_path_mod
 from app.validation import json_object
 
@@ -163,7 +164,9 @@ def setup():
         # controller unprovisioned and re-runnable rather than half-set-up.
         path_error = ui_path_mod.validate(new_path) if new_path else None
 
-        if pin != confirm:
+        if request.form.get("agree") != "1":
+            error = "You must agree to the Terms of Service to continue."
+        elif pin != confirm:
             error = "PINs did not match."
         elif path_error:
             error = path_error
@@ -174,6 +177,7 @@ def setup():
                 session.clear()
                 session["logged_in"] = True
                 session["is_master"] = False
+                terms.record_acceptance("setup")
 
                 if new_path and new_path != ui_path_mod.current_path():
                     if ui_path_mod.apply(new_path) is None:
@@ -227,6 +231,23 @@ def login():
         error = "Invalid PIN."
 
     return render_template("login.html", error=error)
+
+
+@auth_bp.route("/terms/accept", methods=["GET", "POST"])
+def accept_terms():
+    """One-time acceptance after an upgrade, or when the Terms change."""
+    if not session.get("logged_in"):
+        return redirect(url_for("auth.login"))
+    if terms.terms_accepted():
+        return redirect(url_for("main.index"))
+
+    error = None
+    if request.method == "POST":
+        if request.form.get("agree") == "1":
+            terms.record_acceptance("login")
+            return redirect(url_for("main.index"))
+        error = "Tick the box to agree to the Terms of Service and continue."
+    return render_template("accept_terms.html", error=error, terms_version=terms.TERMS_VERSION)
 
 
 @auth_bp.route("/logout")

@@ -157,6 +157,14 @@
         /* Hidden form field */
         #pin-input { display: none; }
 
+        .terms-note {
+            font-size: 0.9rem;
+            line-height: 1.4;
+            color: var(--text);
+            text-align: center;
+        }
+        .terms-note a { color: var(--accent); text-decoration: underline; }
+
     </style>
 </head>
 <body style="{% if site_settings.get('bg_image_url') %}--bg-image: url('{{ site_settings.bg_image_url | e }}'); {% endif %}{% if site_settings.get('accent_color') %}--accent: {{ site_settings.accent_color | e }}; {% endif %}{% if site_settings.get('text_color') %}--text: {{ site_settings.text_color | e }};{% endif %}">
@@ -209,6 +217,11 @@
                 <button class="key" data-digit="0" type="button">0</button>
                 <button class="key key-empty" type="button" aria-hidden="true"></button>
             </div>
+
+            <p class="terms-note">
+                By logging in you agree to the
+                <a href="{{ url_for('main.terms') }}">Terms of Service</a>.
+            </p>
 
         </div>
     </div>

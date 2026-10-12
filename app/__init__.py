@@ -437,7 +437,7 @@ def create_app():
         # Let unknown paths 404 normally instead of redirecting to setup.
         if request.endpoint is None:
             return None
-        if request.endpoint in ("static", "auth.setup"):
+        if request.endpoint in ("static", "auth.setup", "main.terms"):
             return None
         if is_unprovisioned():
             return redirect(url_for("auth.setup"))

@@ -133,7 +133,7 @@ class Headers(SecurityCase):
 
 
 class Auth(SecurityCase):
-    PUBLIC_ENDPOINTS = {"static", "auth.login", "auth.logout", "auth.setup",
+    PUBLIC_ENDPOINTS = {"static", "auth.login", "auth.logout", "auth.setup", "main.terms",
                         "scenes.internal_apply_scene", "effects.internal_apply_effect"}
 
     def test_every_other_route_requires_a_session(self):
