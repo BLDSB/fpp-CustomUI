@@ -274,6 +274,9 @@
     /* .hint is otherwise only styled inside .form-field, and the rows below
        are built from .settings-row instead. */
     .settings-card .hint { font-size: 0.74rem; color: var(--text-dim); line-height: 1.4; }
+    #remote-address a { color: var(--text); text-decoration: underline; word-break: break-all; }
+    #remote-leave .btn-save { margin-top: 14px; }
+    #remote-leave .hint { display: block; margin-top: 12px; }
     .net-status {
         font-size: 0.8rem;
         color: var(--text-dim);
@@ -372,6 +375,42 @@
 
         <div>
             <button id="btn-save-ui-path" class="btn-save">Change Address</button>
+        </div>
+    </div>
+
+    <!-- Remote Access -->
+    <div class="settings-card" id="remote-card" style="display:none">
+        <h2>Remote Access</h2>
+        <div class="hint" id="remote-state">Checking&hellip;</div>
+
+        <div id="remote-join" style="display:none">
+            <div class="form-field">
+                <label for="s-remote-code">Enrolment code</label>
+                <input type="text" id="s-remote-code" maxlength="80"
+                       autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                       placeholder="Paste the code from the BLD portal">
+                <span class="hint">
+                    Your administrator creates this under Manage sites &rarr; Enrol device.
+                    It works once and expires after 24 hours.
+                </span>
+            </div>
+            <div>
+                <button id="btn-remote-join" class="btn-save">Enable Remote Access</button>
+            </div>
+        </div>
+
+        <div id="remote-leave" style="display:none">
+            <div class="form-field">
+                <label>Remote address</label>
+                <div id="remote-address"></div>
+            </div>
+            <div>
+                <button id="btn-remote-leave" class="btn-save">Disconnect</button>
+            </div>
+            <span class="hint">
+                Disconnecting stops remote access from this controller. To remove the site
+                from the portal as well, ask your administrator to revoke it there.
+            </span>
         </div>
     </div>
 
@@ -2134,6 +2173,116 @@
                 btn.disabled = false;
             }
         });
+    })();
+
+    // ── Remote access ─────────────────────────────────────────────────────────
+    // Joining runs a root helper that installs/starts the tunnel, so it can take a
+    // minute. The portal says which URL path this site should use; if that differs,
+    // the server moves the controller there and returns the new address.
+    (function () {
+        const card   = document.getElementById('remote-card');
+        const state  = document.getElementById('remote-state');
+        const join   = document.getElementById('remote-join');
+        const leave  = document.getElementById('remote-leave');
+        const code   = document.getElementById('s-remote-code');
+        const joinBtn  = document.getElementById('btn-remote-join');
+        const leaveBtn = document.getElementById('btn-remote-leave');
+        const addr   = document.getElementById('remote-address');
+        if (!card) return;
+        const root = window.APP_ROOT || '';
+
+        function show(info) {
+            if (!info.available) { card.style.display = 'none'; return; }
+            card.style.display = '';
+            if (info.error) {
+                state.textContent = info.error;
+                join.style.display = leave.style.display = 'none';
+                return;
+            }
+            if (info.enrolled) {
+                state.textContent = info.connected
+                    ? 'Connected. This controller can be reached remotely.'
+                    : 'Set up, but not connected right now. It retries automatically.';
+                state.style.color = info.connected ? '' : 'var(--accent)';
+                addr.textContent = '';
+                if (info.address && /^https:\/\//.test(info.address)) {
+                    const a = document.createElement('a');
+                    a.href = info.address;
+                    a.textContent = info.address;
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                    addr.appendChild(a);
+                }
+                join.style.display = 'none';
+                leave.style.display = '';
+            } else {
+                state.textContent = 'Not set up. Enter a code from the portal to allow remote access.';
+                state.style.color = '';
+                join.style.display = '';
+                leave.style.display = 'none';
+            }
+        }
+
+        async function refresh() {
+            try {
+                const res = await fetch(root + '/api/remote/status');
+                show(await res.json());
+            } catch (err) {
+                state.textContent = 'Could not read the remote access status.';
+                card.style.display = '';
+            }
+        }
+
+        joinBtn.addEventListener('click', async () => {
+            const value = code.value.trim();
+            if (!value) { showToast('Paste the enrolment code first.', 'error'); return; }
+            joinBtn.disabled = true;
+            state.textContent = 'Connecting. This can take up to a minute\u2026';
+            try {
+                const res  = await fetch(root + '/api/remote/enroll', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ code: value }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not enable remote access.');
+                code.value = '';
+                if (data.warning) showToast(data.warning, 'error');
+                else showToast(data.connected ? 'Remote access is on.'
+                                              : 'Remote access set up. It can take a minute to connect.',
+                               'success');
+                if (data.url) {
+                    showToast('Moved \u2014 reopening at ' + data.url, 'success');
+                    setTimeout(function () { location.href = data.url + 'settings'; }, 1500);
+                    return;
+                }
+                refresh();
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+                refresh();
+            } finally {
+                joinBtn.disabled = false;
+            }
+        });
+
+        leaveBtn.addEventListener('click', async () => {
+            if (!confirm('Stop remote access for this controller?\n\n' +
+                         'It will no longer be reachable from the portal.')) return;
+            leaveBtn.disabled = true;
+            try {
+                const res  = await fetch(root + '/api/remote/disconnect', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not disconnect.');
+                showToast('Remote access is off.', 'success');
+            } catch (err) {
+                showToast('Error: ' + err.message, 'error');
+            } finally {
+                leaveBtn.disabled = false;
+                refresh();
+            }
+        });
+
+        refresh();
     })();
 
     // ── Network & WiFi hotspot ────────────────────────────────────────────────

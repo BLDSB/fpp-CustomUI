@@ -163,6 +163,30 @@ fi
 "$SETPATH_BIN" "$UI_PATH"
 echo ""
 
+# ── 5b. Remote access helper ──────────────────────────────────────────────────
+# Lets the Settings page join the BLD remote-access tunnel with a code from the
+# portal. Same shape as the path helper: root-owned copy outside the plugin
+# directory, plus a sudo rule for exactly that file. The portal address lives in
+# a root-owned file so a caller can never point the helper at another server.
+REMOTE_BIN="/usr/local/sbin/fpp-remote"
+cp "$PLUGIN_DIR/deploy/fpp-remote.sh" "$REMOTE_BIN"
+chown root:root "$REMOTE_BIN"
+chmod 755 "$REMOTE_BIN"
+if [ ! -f /etc/fpp-remote.conf ]; then
+    echo "PORTAL_URL=https://portal.bldlightingcontrol.com" > /etc/fpp-remote.conf
+    chown root:root /etc/fpp-remote.conf
+    chmod 644 /etc/fpp-remote.conf
+fi
+REMOTE_SUDOERS="/etc/sudoers.d/fpp-remote"
+echo "fpp ALL=(root) NOPASSWD: $REMOTE_BIN" > "$REMOTE_SUDOERS"
+chmod 0440 "$REMOTE_SUDOERS"
+if ! visudo -cf "$REMOTE_SUDOERS" > /dev/null 2>&1; then
+    rm -f "$REMOTE_SUDOERS"
+    echo "⚠ Could not install the remote access sudo rule — enrol over SSH instead."
+fi
+echo "✓ Remote access helper installed."
+echo ""
+
 # ── 6. FPP WiFi tethering fallback ────────────────────────────────────────────
 # FPP's default tethering mode ("if no connection") walks every wired interface
 # and refuses to start the rescue AP whenever one has carrier. A venue with a
