@@ -12,7 +12,7 @@ from flask import current_app
 from app import db
 from app.models import AppSetting
 
-TERMS_VERSION = "2026-10-12-r2"
+TERMS_VERSION = "2026-10-12-r3"
 
 _VERSION_KEY = "terms_accepted_version"
 _AT_KEY = "terms_accepted_at"
