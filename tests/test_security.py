@@ -96,6 +96,24 @@ class Csrf(SecurityCase):
             )
             self.assertNotEqual(r.status_code, 403, host)
 
+    def test_bld_remote_origin_is_accepted(self):
+        self.login()
+        r = self.client.post(
+            "/api/change-pin",
+            headers={"Origin": "https://inova.bldlightingcontrol.com", "Host": "127.0.0.1:5000"},
+        )
+        self.assertNotEqual(r.status_code, 403)
+
+    def test_lookalike_bld_remote_origins_are_refused(self):
+        self.login()
+        for origin in ("https://bldlightingcontrol.com.evil.example",
+                       "https://evilbldlightingcontrol.com",
+                       "https://blacklightdesigns.com", "https://bldlightingcontrol.org",
+                       "https://bldlightingcontrol.com.attacker.com:443"):
+            r = self.client.post("/api/change-pin",
+                                 headers={"Origin": origin, "Host": "127.0.0.1:5000"})
+            self.assertEqual(r.status_code, 403, origin)
+
     def test_lookalike_dataplicity_origins_are_refused(self):
         self.login()
         for origin in ("https://dataplicity.io.evil.example", "https://evildataplicity.io",

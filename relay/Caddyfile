@@ -1,0 +1,11 @@
+# BLD remote-access relay. One wildcard certificate (DNS-01 via Cloudflare)
+# covers every site name. Nothing is proxied until the portal's forward_auth
+# gate exists; unknown names answer 404.
+*.bldlightingcontrol.com, bldlightingcontrol.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+	header -Server
+	respond "Not found" 404
+}
