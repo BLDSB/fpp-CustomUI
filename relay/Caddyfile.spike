@@ -1,0 +1,26 @@
+# SPIKE ONLY: inova is proxied behind a temporary shared login until the portal's
+# forward_auth gate replaces it. Everything else still answers 404.
+*.bldlightingcontrol.com, bldlightingcontrol.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+	header -Server
+
+	@inova host inova.bldlightingcontrol.com
+	handle @inova {
+		basic_auth {
+			{env.SPIKE_USER} {env.SPIKE_HASH}
+		}
+		@root path /
+		redir @root /Inova/ 302
+		reverse_proxy 10.99.0.2:80 {
+			# Apache on the Pi rewrites redirects to its own tunnel address.
+			header_down Location ^http://10\.99\.0\.\d+(.*)$ https://{http.request.host}$1
+		}
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}

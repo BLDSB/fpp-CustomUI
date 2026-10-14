@@ -54,6 +54,16 @@ if [ -f "/etc/sudoers.d/fpp-ui-set-path" ]; then
     rm -f /etc/sudoers.d/fpp-ui-set-path
     echo "✓ Sudoers rule removed."
 fi
+# Remote access helper. The tunnel itself (wg-quick@bld, its key and config) is
+# deliberately left running: a plugin reinstall passes through here, and dropping
+# the tunnel would cut a remote site off until someone enrolled it again.
+if [ -f "/usr/local/sbin/fpp-remote" ]; then
+    rm -f /usr/local/sbin/fpp-remote
+    echo "✓ Remote access helper removed (tunnel left running)."
+fi
+if [ -f "/etc/sudoers.d/fpp-remote" ]; then
+    rm -f /etc/sudoers.d/fpp-remote
+fi
 if [ -f "/etc/logrotate.d/fpp-ui" ]; then
     rm -f /etc/logrotate.d/fpp-ui
     echo "✓ Log rotation config removed."

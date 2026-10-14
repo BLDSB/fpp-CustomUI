@@ -18,6 +18,7 @@ from app.models import (
     all_is_virtual, get_all_zones, is_managed_overlay, ref_name_lookups,
 )
 from app import overlay_layout
+from app import remote_access
 from app import ui_path as ui_path_mod
 from app.security import rate_limited
 from app.validation import json_object
@@ -1166,6 +1167,53 @@ def set_ui_path():
     if error:
         return jsonify({"error": error}), 400
     return jsonify({"ok": True, "url": f"/{name}/"})
+
+
+# ── Remote access (BLD tunnel) ────────────────────────────────────────────────
+
+@settings_bp.get("/api/remote/status")
+@login_required
+def remote_status():
+    return jsonify(remote_access.status())
+
+
+@settings_bp.post("/api/remote/enroll")
+@login_required
+@rate_limited(5, 600)
+def remote_enroll():
+    """Join the tunnel with a code from the BLD portal.
+
+    The portal also says which URL path this site should use. If that differs
+    from the current one it is applied here (through the same helper as the Web
+    Address card) and the browser is sent to the new address.
+    """
+    data = json_object()
+    result, error = remote_access.enroll(data.get("code"))
+    if error:
+        return jsonify({"error": error}), 400
+
+    payload = {"ok": True, "address": result.get("address"),
+               "connected": bool(result.get("connected"))}
+    name = str(result.get("ui_path") or "").lstrip("/")
+    if name and name != ui_path_mod.current_path():
+        problem = ui_path_mod.validate(name) or ui_path_mod.apply(name)
+        if problem:
+            payload["warning"] = (f"Connected, but the controller could not move to /{name}: "
+                                  f"{problem} Set the URL path to '{name}' under Web Address "
+                                  "so the portal links work.")
+        else:
+            payload["url"] = f"/{name}/"
+    return jsonify(payload)
+
+
+@settings_bp.post("/api/remote/disconnect")
+@login_required
+@rate_limited(5, 600)
+def remote_disconnect():
+    error = remote_access.disconnect()
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"ok": True})
 
 
 # ── Alert email ──────────────────────────────────────────────────────────────

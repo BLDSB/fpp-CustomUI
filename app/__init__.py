@@ -338,7 +338,7 @@ def _register_blueprints(app):
 
 
 def _start_background_workers(app):
-    """Start the daemon threads (FPP startup sync, alert monitor).
+    """Start the daemon threads (FPP startup sync, alert monitor, remote heartbeat).
 
     Skipped in the Werkzeug reloader's parent process so debug mode does not
     start them twice."""
@@ -349,6 +349,8 @@ def _start_background_workers(app):
         ).start()
         from app.alert_monitor import start_monitor
         start_monitor(app)
+        from app.heartbeat import start_heartbeat
+        start_heartbeat(app)
 
 
 def _register_template_and_error_handlers(app):

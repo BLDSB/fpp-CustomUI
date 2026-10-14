@@ -53,17 +53,24 @@ def _is_local_host(host):
         return name == "localhost" or name.endswith(".local") or "." not in name
 
 
-def _is_dataplicity_host(host):
-    """True for a Dataplicity wormhole address (``name.dataplicity.io``).
+# Domains whose subdomains are our own remote-access front doors. Dataplicity
+# stays during the move to the BLD relay and can be dropped once it is cancelled.
+_REMOTE_DOMAINS = ("dataplicity.io", "bldlightingcontrol.com")
 
-    Dataplicity rewrites the Host header on its way to the Pi, so neither Host
-    nor X-Forwarded-Host ever names the address the operator typed. Every unit
-    this plugin ships on is reached that way, so the suffix is trusted outright
-    instead of needing a per-unit TRUSTED_ORIGINS entry. Port is ignored; the
-    scheme is not part of the host, but a browser only sends these over https.
+
+def _is_remote_host(host):
+    """True for a remote-access address (``name.dataplicity.io`` or
+    ``name.bldlightingcontrol.com``).
+
+    Both services rewrite or hide the Host header on its way to the Pi, so
+    neither Host nor X-Forwarded-Host ever names the address the operator typed.
+    Every unit this plugin ships on is reached that way, so the suffix is trusted
+    outright instead of needing a per-unit TRUSTED_ORIGINS entry. Port is
+    ignored; the scheme is not part of the host, but a browser only sends these
+    over https.
     """
     name = host.rsplit(":", 1)[0]
-    return name == "dataplicity.io" or name.endswith(".dataplicity.io")
+    return any(name == d or name.endswith("." + d) for d in _REMOTE_DOMAINS)
 
 
 def _behind_proxy_without_host():
@@ -91,7 +98,7 @@ def _csrf_blocked():
     if not origin:
         return False
     origin_host = _host_of(origin)
-    if origin_host in _allowed_hosts() or _is_dataplicity_host(origin_host):
+    if origin_host in _allowed_hosts() or _is_remote_host(origin_host):
         return False
     # Apache on a stock install does not pass the browser's Host through, so the
     # Origin cannot be compared with anything. Fall back to "the page that sent
