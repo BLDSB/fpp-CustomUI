@@ -1014,6 +1014,17 @@
             <button id="btn-set-master" class="btn-save">Set Master PIN</button>
         </div>
     </div>
+
+    <div class="settings-card">
+        <h2>Hand Over to Client</h2>
+        <p class="hint" style="font-size:0.78rem;color:var(--text-dim);line-height:1.5;margin:0">
+            Clears the recorded Terms of Service agreement and signs you out, so the next
+            person to log in (the client) is asked to agree. Do this as the last step of setup.
+        </p>
+        <div>
+            <button id="btn-reset-terms" class="btn-save btn-danger">Reset Terms Agreement</button>
+        </div>
+    </div>
     {% endif %}
 
     <!-- System reboot -->
@@ -1908,6 +1919,21 @@
     // The master-PIN card only renders for a master session, so this block must
     // not assume the button exists — an unguarded null here aborts the rest of
     // the script and silently unbinds every handler below it.
+    const resetTermsBtn = document.getElementById('btn-reset-terms');
+    if (resetTermsBtn) resetTermsBtn.addEventListener('click', async () => {
+        if (!confirm('Clear the Terms agreement and sign out? The next login will be asked to agree.')) return;
+        resetTermsBtn.disabled = true;
+        try {
+            const res = await fetch((window.APP_ROOT||'') + '/api/reset-terms', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to reset Terms agreement.');
+            window.location.href = (window.APP_ROOT||'') + '/login';
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+            resetTermsBtn.disabled = false;
+        }
+    });
+
     const masterBtn = document.getElementById('btn-set-master');
     if (masterBtn) masterBtn.addEventListener('click', async () => {
         const btn     = masterBtn;

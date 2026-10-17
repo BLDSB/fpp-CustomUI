@@ -44,3 +44,17 @@ def record_acceptance(via):
             db.session.add(AppSetting(key=key, value=value))
     db.session.commit()
     current_app.logger.info("Terms of Service %s accepted via %s", TERMS_VERSION, via)
+
+
+def reset_acceptance():
+    """Forget the stored acceptance so the next login is asked to agree again.
+
+    Used at handover: the installer accepts while setting up, then clears it so
+    the client is the one who ticks the box.
+    """
+    for key in (_VERSION_KEY, _AT_KEY, _VIA_KEY):
+        setting = db.session.get(AppSetting, key)
+        if setting:
+            db.session.delete(setting)
+    db.session.commit()
+    current_app.logger.info("Terms of Service acceptance reset for handover")
