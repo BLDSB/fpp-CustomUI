@@ -309,6 +309,17 @@ def set_master_pin():
     return jsonify({"ok": True})
 
 
+@auth_bp.post("/api/reset-terms")
+@login_required
+def reset_terms():
+    # Handover tool: master sessions only (enforced here, not just hidden in the UI).
+    if not session.get("is_master"):
+        return jsonify({"error": "Master PIN required."}), 403
+    terms.reset_acceptance()
+    session.clear()
+    return jsonify({"ok": True})
+
+
 # Backward-compat alias kept so any existing bookmarks/scripts still work
 @auth_bp.post("/api/change-password")
 @login_required

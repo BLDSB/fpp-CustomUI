@@ -102,3 +102,24 @@ def test_fpp_playlist_callbacks_are_not_gated(app_factory, fpp, real_terms):
 def test_accept_screen_requires_login(app_factory, fpp, real_terms):
     resp = app_factory().test_client().get("/terms/accept", follow_redirects=False)
     assert resp.status_code == 302 and resp.headers["Location"].endswith("/login")
+
+
+def test_reset_terms_requires_a_master_session(client, real_terms):
+    client.post("/terms/accept", data={"agree": "1"})
+    resp = client.post("/api/reset-terms")
+    assert resp.status_code == 403
+    assert _setting(client.app, "terms_accepted_version") == real_terms.TERMS_VERSION
+
+
+def test_master_reset_clears_acceptance_and_signs_out(client, real_terms):
+    client.post("/terms/accept", data={"agree": "1"})
+    with client.session_transaction() as s:
+        s["is_master"] = True
+    assert client.post("/api/reset-terms").status_code == 200
+    for key in ("terms_accepted_version", "terms_accepted_at", "terms_accepted_via"):
+        assert _setting(client.app, key) is None
+    # Signed out; the next login (the client) must agree again.
+    assert client.get("/settings", follow_redirects=False).headers["Location"].endswith("/login")
+    with client.session_transaction() as s:
+        s["logged_in"] = True
+    assert client.get("/settings", follow_redirects=False).headers["Location"].endswith("/terms/accept")
