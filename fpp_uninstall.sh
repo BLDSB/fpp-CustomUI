@@ -54,12 +54,22 @@ if [ -f "/etc/sudoers.d/fpp-ui-set-path" ]; then
     rm -f /etc/sudoers.d/fpp-ui-set-path
     echo "✓ Sudoers rule removed."
 fi
-# Remote access helper. The tunnel itself (wg-quick@bld, its key and config) is
-# deliberately left running: a plugin reinstall passes through here, and dropping
-# the tunnel would cut a remote site off until someone enrolled it again.
+# Remote access. Uninstalling ends the BLD tunnel: the helper stops it and deletes
+# the config and state, then the key and the systemd drop-in go too. A later
+# reinstall has to be enrolled again with a fresh code from the portal.
+if [ -x "/usr/local/sbin/fpp-remote" ]; then
+    /usr/local/sbin/fpp-remote disconnect >/dev/null 2>&1 || true
+fi
+systemctl disable --now wg-quick@bld >/dev/null 2>&1 || true
+rm -f /etc/wireguard/bld.conf /etc/wireguard/bld.key
+rm -rf /etc/systemd/system/wg-quick@bld.service.d
+rm -rf /var/lib/fpp-remote
+rm -f /etc/fpp-remote.conf
+systemctl daemon-reload
+echo "✓ Remote access tunnel removed (enrol again after a reinstall)."
 if [ -f "/usr/local/sbin/fpp-remote" ]; then
     rm -f /usr/local/sbin/fpp-remote
-    echo "✓ Remote access helper removed (tunnel left running)."
+    echo "✓ Remote access helper removed."
 fi
 if [ -f "/etc/sudoers.d/fpp-remote" ]; then
     rm -f /etc/sudoers.d/fpp-remote
