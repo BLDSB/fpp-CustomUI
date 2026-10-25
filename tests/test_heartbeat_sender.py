@@ -90,6 +90,28 @@ class Sender(unittest.TestCase):
         self.assertEqual(json.loads(post.call_args[1]["data"]), {"fppd": "running"})
         self.assertLessEqual(post.call_args[1]["timeout"], 5)
 
+    def _hub_url_with_state(self, state):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "state.json")
+            if state is not None:
+                with open(path, "w") as fh:
+                    fh.write(state if isinstance(state, str) else json.dumps(state))
+            with mock.patch.object(heartbeat, "STATE_FILE", path):
+                return heartbeat.hub_url()
+
+    def test_the_hub_address_comes_from_the_enrolment_record(self):
+        self.assertEqual(self._hub_url_with_state({"hub_ip": "10.98.0.1", "heartbeat_port": 8091}),
+                         "http://10.98.0.1:8091/api/heartbeat")
+
+    def test_older_or_odd_records_fall_back_to_the_live_hub(self):
+        live = "http://10.99.0.1:8081/api/heartbeat"
+        for state in (None, "not json", {}, {"slug": "x"},
+                      {"hub_ip": "192.168.1.1", "heartbeat_port": 8081},
+                      {"hub_ip": "10.98.0.1", "heartbeat_port": 80},
+                      {"hub_ip": "10.98.0.1", "heartbeat_port": "abc"}):
+            self.assertEqual(self._hub_url_with_state(state), live, state)
+
     def test_a_failed_send_never_raises(self):
         with mock.patch.object(heartbeat, "collect", return_value={}), \
                 mock.patch.object(heartbeat.requests, "post",

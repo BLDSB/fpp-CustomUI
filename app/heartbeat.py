@@ -35,6 +35,21 @@ _plugin_rev = None
 _last_warning = 0.0
 
 
+def hub_url():
+    """The hub's heartbeat address. Enrolment records the hub's tunnel address and port in
+    the state file (the BLD test portal uses a different range from the live one); units
+    enrolled before that was recorded, and any odd value, get the live hub."""
+    try:
+        with open(STATE_FILE) as fh:
+            state = json.load(fh)
+        ip, port = str(state.get("hub_ip", "")), int(state.get("heartbeat_port", 0))
+        if re.fullmatch(r"10\.\d{1,3}\.0\.1", ip) and 1024 <= port <= 65535:
+            return f"http://{ip}:{port}/api/heartbeat"
+    except (OSError, ValueError, TypeError):
+        pass
+    return HUB_URL
+
+
 def enrolled():
     """True once the controller has joined the tunnel (the helper writes this file)."""
     return os.path.exists(STATE_FILE)
@@ -116,7 +131,7 @@ def collect(app):
 def send(app):
     """One heartbeat. Returns True if the hub accepted it; never raises."""
     global _last_warning
-    url = app.config.get("HEARTBEAT_URL", HUB_URL)
+    url = app.config.get("HEARTBEAT_URL") or hub_url()
     try:
         resp = requests.post(url, data=json.dumps(collect(app)), timeout=5,
                              headers={"Content-Type": "application/json"})

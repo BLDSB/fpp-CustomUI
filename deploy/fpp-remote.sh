@@ -115,14 +115,18 @@ import json, re, shlex, sys
 d = json.load(sys.stdin)
 rules = {
     "slug": r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?",
-    "tunnel_ip": r"10\.99\.0\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])",
+    "tunnel_ip": r"10\.\d{1,3}\.0\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])",
     "hub_public_key": r"[A-Za-z0-9+/]{43}=",
     "endpoint": r"[A-Za-z0-9.-]{1,100}:\d{2,5}",
     "ui_path": r"/[A-Za-z0-9_-]{1,32}",
     "site_domain": r"[A-Za-z0-9.-]{3,100}",
+    "hub_ip": r"10\.\d{1,3}\.0\.1",
+    "heartbeat_port": r"\d{4,5}",
 }
+# A portal that predates these two fields is the live one.
+defaults = {"hub_ip": "10.99.0.1", "heartbeat_port": "8081"}
 for key, pattern in rules.items():
-    value = str(d.get(key, ""))
+    value = str(d.get(key, defaults.get(key, "")))
     if not re.fullmatch(pattern, value):
         sys.exit("bad value for " + key)
     print("R_%s=%s" % (key.upper(), shlex.quote(value)))
@@ -137,7 +141,7 @@ Address = ${R_TUNNEL_IP}/32
 [Peer]
 PublicKey = ${R_HUB_PUBLIC_KEY}
 Endpoint = ${R_ENDPOINT}
-AllowedIPs = 10.99.0.1/32
+AllowedIPs = ${R_HUB_IP}/32
 PersistentKeepalive = 25
 CONFIG
     chmod 600 "$WG_CONF"
@@ -154,12 +158,13 @@ UNIT
 
     local address="https://${R_SLUG}.${R_SITE_DOMAIN}"
     install -d -m 755 "$STATE_DIR"
-    SLUG="$R_SLUG" ADDRESS="$address" TUNNEL="$R_TUNNEL_IP" UIPATH="$R_UI_PATH" STATE_FILE="$STATE" \
+    SLUG="$R_SLUG" ADDRESS="$address" TUNNEL="$R_TUNNEL_IP" HUB="$R_HUB_IP" HBPORT="$R_HEARTBEAT_PORT" UIPATH="$R_UI_PATH" STATE_FILE="$STATE" \
         python3 - <<'PY'
 import json, os
 with open(os.environ["STATE_FILE"], "w") as fh:
     json.dump({"slug": os.environ["SLUG"], "address": os.environ["ADDRESS"],
-               "tunnel_ip": os.environ["TUNNEL"], "ui_path": os.environ["UIPATH"]}, fh)
+               "tunnel_ip": os.environ["TUNNEL"], "hub_ip": os.environ["HUB"],
+               "heartbeat_port": int(os.environ["HBPORT"]), "ui_path": os.environ["UIPATH"]}, fh)
 os.chmod(os.environ["STATE_FILE"], 0o644)
 PY
 
