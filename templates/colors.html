@@ -237,6 +237,17 @@
         transition: color 0.15s, background 0.15s;
     }
     .btn-del:hover { color: var(--accent); background: rgba(62,179,0,0.1); }
+    .btn-edit {
+        background: var(--bg);
+        border: none;
+        border-left: 1px solid var(--border-dim);
+        color: var(--text-dim);
+        padding: 0 0.6rem;
+        cursor: pointer;
+        font-size: 0.8rem;
+        transition: color 0.15s, background 0.15s;
+    }
+    .btn-edit:hover { color: var(--accent); background: rgba(62,179,0,0.1); }
 
     .empty-state { color: var(--text-dim); font-size: 0.85rem; }
 
@@ -292,7 +303,7 @@
         border: 1px solid rgba(255,255,255,0.15);
         flex-shrink: 0;
     }
-    .scene-del {
+    .scene-edit, .scene-del {
         background: var(--bg);
         border: none;
         border-left: 1px solid var(--border-dim);
@@ -305,7 +316,7 @@
         align-items: center;
         transition: color 0.15s, background 0.15s;
     }
-    .scene-del:hover { color: var(--accent); background: rgba(62,179,0,0.1); }
+    .scene-edit:hover, .scene-del:hover { color: var(--accent); background: rgba(62,179,0,0.1); }
     .scene-name { font-weight: 500; }
     .btn-scene-save {
         width: 100%;
@@ -434,6 +445,10 @@
     zonePills.querySelectorAll('.zone-pill').forEach(p => {
         zoneColors[p.dataset.model] = colorInput.value;
     });
+    // Zones whose current color came from a saved color button (model → saved
+    // color id).  A scene saved from such a zone follows later edits of that
+    // saved color; any other change to the zone's color unlinks it.
+    const zoneSaved = {};
 
     // Per-zone white level (0-255).  Only zones with a white channel ever send
     // one; for the rest it is never shown or sent, so RGB-only zones ignore it.
@@ -552,7 +567,9 @@
         const resp = await fetch(url, opts);
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${resp.status}`);
+            const e = new Error(err.error || `HTTP ${resp.status}`);
+            e.scenes = err.scenes;
+            throw e;
         }
         return resp.json();
     }
@@ -608,7 +625,11 @@
     function onColorChange() {
         const hex = colorInput.value;
         hexDisplay.textContent = hex.toUpperCase();
-        activeModels.forEach(model => { zoneColors[model] = hex; markTouched(model); });
+        activeModels.forEach(model => {
+            zoneColors[model] = hex;
+            delete zoneSaved[model];
+            markTouched(model);
+        });
         sendColor(hex);
     }
     colorInput.addEventListener('input', onColorChange);
@@ -621,6 +642,7 @@
         activeModels.forEach(model => {
             if (!hasWhite(model)) return;   // RGB-only zones ignore white
             zoneWhites[model] = white;
+            delete zoneSaved[model];        // no longer exactly that saved color
             markTouched(model);
         });
         sendColor(colorInput.value);
@@ -639,6 +661,7 @@
             zonePills.querySelectorAll('.zone-pill').forEach(p => {
                 zoneColors[p.dataset.model] = '#000000';
                 zoneWhites[p.dataset.model] = 0;
+                delete zoneSaved[p.dataset.model];
             });
             touchedModels.clear();
             colorInput.value = '#000000';
@@ -711,10 +734,12 @@
         const white = Number(btn.white) || 0;
         wrap.innerHTML = `
             <button class="color-btn" data-hex="${escHtml(btn.hex_value)}" data-white="${white}"
+                    data-color-id="${escHtml(btn.saved_color_id)}"
                     ${white ? `title="White ${white}"` : ''} aria-label="Apply ${escHtml(btn.label)}">
                 <span class="dot" style="background:${escHtml(withWhite(btn.hex_value, white))}"></span>
                 ${escHtml(btn.label)}
             </button>
+            <button class="btn-edit" title="Change this color's shade" aria-label="Edit ${escHtml(btn.label)}">&#9998;</button>
             <button class="btn-del" aria-label="Delete ${escHtml(btn.label)}">&#x2715;</button>
         `;
         savedGrid.appendChild(wrap);
@@ -742,13 +767,47 @@
             const white = Number(applyBtn.dataset.white) || 0;
             colorInput.value = hex;
             hexDisplay.textContent = hex.toUpperCase();
+            const colorId = parseInt(applyBtn.dataset.colorId, 10);
             setWhiteUi(white);
             activeModels.forEach(model => {
                 zoneColors[model] = hex;
                 if (hasWhite(model)) zoneWhites[model] = white;
+                if (colorId) zoneSaved[model] = colorId; else delete zoneSaved[model];
                 markTouched(model);
             });
             sendColor(hex);
+            return;
+        }
+
+        const editBtn = e.target.closest('.btn-edit');
+        if (editBtn) {
+            const wrap = editBtn.closest('.color-btn-wrap');
+            const id = wrap?.dataset.id;
+            const apply = wrap?.querySelector('.color-btn');
+            if (!id || !apply) return;
+            const label = apply.textContent.trim();
+            const edited = await showInputModal(
+                'Edit this color:', 'Color name…', label, apply.dataset.hex);
+            if (!edited) return;
+            if (edited.name === label && edited.color.toLowerCase() === apply.dataset.hex.toLowerCase()) return;
+            try {
+                const res = await apiFetch(`/colors/buttons/${id}`, 'PUT',
+                    { hex: edited.color, name: edited.name });
+                const colorId = parseInt(apply.dataset.colorId, 10);
+                apply.dataset.hex = res.hex_value;
+                apply.setAttribute('aria-label', `Apply ${res.label}`);
+                apply.innerHTML = `<span class="dot" style="background:${escHtml(withWhite(res.hex_value, apply.dataset.white))}"></span> ${escHtml(res.label)}`;
+                // Zones on screen that use this saved color follow it too.
+                Object.keys(zoneSaved).forEach(model => {
+                    if (zoneSaved[model] === colorId) zoneColors[model] = res.hex_value;
+                });
+                await loadScenes();
+                showToast(res.scenes.length
+                    ? `Color updated — also changed in: ${res.scenes.join(', ')}`
+                    : 'Color updated', 'success');
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
             return;
         }
 
@@ -758,7 +817,19 @@
             const id = wrap?.dataset.id;
             if (!id) return;
             try {
-                await apiFetch(`/colors/buttons/${id}`, 'DELETE');
+                try {
+                    await apiFetch(`/colors/buttons/${id}`, 'DELETE');
+                } catch (err) {
+                    if (!err.scenes) throw err;
+                    // Scenes follow this color.  Deleting keeps them playing
+                    // their current shade, but they stop following it.
+                    const ok = window.confirm(
+                        `These scenes use this color: ${err.scenes.join(', ')}.\n\n` +
+                        'Delete it anyway? They keep their current shade but will no longer follow this color.');
+                    if (!ok) return;
+                    await apiFetch(`/colors/buttons/${id}?detach=1`, 'DELETE');
+                    loadScenes();
+                }
                 wrap.remove();
                 if (!savedGrid.children.length) {
                     savedGrid.innerHTML = '<p class="empty-state">No saved colors yet.</p>';
@@ -786,6 +857,7 @@
                 <div class="scene-swatches">${swatchHtml}</div>
                 <span class="scene-name">${escHtml(scene.name)}</span>
             </button>
+            <button class="scene-edit" title="Rename this scene" aria-label="Rename scene ${escHtml(scene.name)}">&#9998;</button>
             <button class="scene-del" aria-label="Delete scene ${escHtml(scene.name)}">&#x2715;</button>
         `;
         return row;
@@ -814,6 +886,7 @@
         // overlap, and applying both would leave whichever landed last on top.
         const zones = {};
         const whites = {};   // only zones that have a white channel
+        const saved_colors = {};
         activeModels.forEach(model => {
             zoneColors[model] = colorInput.value;
             if (hasWhite(model)) zoneWhites[model] = Number(whiteInput.value);
@@ -823,12 +896,13 @@
             const model = p.dataset.model;
             zones[model] = zoneColors[model];
             if (hasWhite(model)) whites[model] = zoneWhites[model];
+            if (zoneSaved[model]) saved_colors[model] = zoneSaved[model];
         });
 
 
         btnSceneSave.disabled = true;
         try {
-            const scene = await apiFetch('/api/scenes', 'POST', { name: name.trim(), zones, whites });
+            const scene = await apiFetch('/api/scenes', 'POST', { name: name.trim(), zones, whites, saved_colors });
             const empty = scenesGrid.querySelector('.empty-state');
             if (empty) empty.remove();
             scenesGrid.appendChild(renderScene(scene));
@@ -859,6 +933,8 @@
                     zoneColors[z.fpp_model] = z.hex_color;
                     // A scene saved before white existed (null) applies with white off.
                     if (hasWhite(z.fpp_model)) zoneWhites[z.fpp_model] = z.white || 0;
+                    if (z.saved_color_id) zoneSaved[z.fpp_model] = z.saved_color_id;
+                    else delete zoneSaved[z.fpp_model];
                     markTouched(z.fpp_model);
                 });
                 const activePill = zonePills.querySelector('.zone-pill.active');
@@ -870,6 +946,26 @@
                 showToast(err.message, 'error');
             } finally {
                 applyBtn.disabled = false;
+            }
+            return;
+        }
+
+        // Rename scene
+        const editBtn = e.target.closest('.scene-edit');
+        if (editBtn) {
+            const row = editBtn.closest('.scene-row');
+            const id = row?.dataset.id;
+            const nameEl = row?.querySelector('.scene-name');
+            if (!id || !nameEl) return;
+            const current = nameEl.textContent;
+            const name = await showInputModal('Rename this scene:', 'Scene name…', current);
+            if (!name || name === current) return;
+            try {
+                const scene = await apiFetch(`/api/scenes/${id}`, 'PUT', { name });
+                row.replaceWith(renderScene(scene));
+                showToast(`Scene renamed — scheduleable as "Scene - ${scene.name}"`, 'success');
+            } catch (err) {
+                showToast(err.message, 'error');
             }
             return;
         }

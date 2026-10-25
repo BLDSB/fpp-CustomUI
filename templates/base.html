@@ -459,6 +459,17 @@
             margin-bottom: 1rem;
         }
         #input-modal-field:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+        #input-modal-color {
+            display: block;
+            width: 100%;
+            height: 3rem;
+            margin-bottom: 1rem;
+            padding: 0;
+            background: none;
+            border: 1px solid var(--border-dim);
+            border-radius: 6px;
+            cursor: pointer;
+        }
         .input-modal-btns { display: flex; gap: 0.65rem; justify-content: flex-end; }
         .input-modal-btns button {
             padding: 0.5rem 1.2rem;
@@ -485,6 +496,7 @@
         <div id="input-modal">
             <p id="input-modal-title"></p>
             <input type="text" id="input-modal-field" autocomplete="off" spellcheck="false">
+            <input type="color" id="input-modal-color" style="display:none" aria-label="Color">
             <div class="input-modal-btns">
                 <button id="input-modal-cancel">Cancel</button>
                 <button id="input-modal-ok">OK</button>
@@ -630,11 +642,16 @@
         })();
 
         // ── Input modal (touch-friendly replacement for prompt()) ──────
-        window.showInputModal = function (title, placeholder, defaultVal) {
+        // With colorVal the dialog also shows a color picker and resolves to
+        // {name, color} instead of the bare string (null on cancel either way).
+        window.showInputModal = function (title, placeholder, defaultVal, colorVal) {
             return new Promise(resolve => {
                 const overlay  = document.getElementById('input-modal-overlay');
                 const titleEl  = document.getElementById('input-modal-title');
                 const field    = document.getElementById('input-modal-field');
+                const colorEl  = document.getElementById('input-modal-color');
+                colorEl.style.display = colorVal ? '' : 'none';
+                if (colorVal) colorEl.value = colorVal;
                 const okBtn    = document.getElementById('input-modal-ok');
                 const cancelBtn = document.getElementById('input-modal-cancel');
 
@@ -650,7 +667,12 @@
                     okBtn.removeEventListener('click', onOk);
                     cancelBtn.removeEventListener('click', onCancel);
                 }
-                function onOk() { const v = field.value.trim(); cleanup(); resolve(v || null); }
+                function onOk() {
+                    const v = field.value.trim();
+                    const color = colorEl.value;
+                    cleanup();
+                    resolve(!v ? null : colorVal ? { name: v, color } : v);
+                }
                 function onCancel() { cleanup(); resolve(null); }
 
                 okBtn.addEventListener('click', onOk);
