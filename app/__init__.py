@@ -89,6 +89,7 @@ def _add_missing_columns(app):
     wanted = [
         # (table, column, DDL type + default)
         ("custom_playlists", "random", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("scene_zones", "saved_color_id", "INTEGER"),
     ]
     from sqlalchemy import text
     for table, column, ddl in wanted:
