@@ -8,7 +8,7 @@ from app.auth_utils import internal_token_error, login_required
 from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb, playlist_url
 from app.fpp_playlist import build_playlist_def, scene_entries
 from app.models import (
-    OVERLAY_MODELS, Scene, SceneZone, all_overlay_models, expand_overlay_models,
+    OVERLAY_MODELS, SavedColor, Scene, SceneZone, all_overlay_models, expand_overlay_models,
 )
 from app.validation import json_object, page_args, str_field
 
@@ -136,6 +136,57 @@ def _apply_scene(scene):
     return _set_scene_colors(scene)
 
 
+def _name_error(name, scene_id=None):
+    """A ready-made error response if ``name`` cannot be a scene name, else None."""
+    if not name or len(name) > 64:
+        return jsonify({"error": "Name required (max 64 chars)"}), 400
+    # The name becomes an FPP playlist name, which goes into a URL path
+    # unencoded — same rule effect presets already enforce.
+    if "/" in name or "\\" in name or ".." in name:
+        return jsonify({"error": "Name cannot contain slashes or .."}), 400
+    clash = Scene.query.filter_by(name=name).first()
+    if clash and clash.id != scene_id:
+        return jsonify({"error": "A scene with that name already exists"}), 409
+    return None
+
+
+def _follow_rename_in_schedule(old_playlist, new_playlist):
+    """Point schedule entries that run the old scene playlist at the new one."""
+    from app.routes.scheduler import _load_schedule, _save_schedule
+    try:
+        entries = _load_schedule()
+        hits = [e for e in entries if e.get("playlist") == old_playlist]
+        for entry in hits:
+            entry["playlist"] = new_playlist
+        if hits:
+            _save_schedule(entries)
+    except requests.RequestException as exc:
+        current_app.logger.warning("Could not update schedule for renamed scene: %s", exc)
+
+
+@scenes_bp.put("/api/scenes/<int:scene_id>")
+@login_required
+def rename_scene(scene_id):
+    scene = db.session.get(Scene, scene_id)
+    if not scene:
+        return jsonify({"error": "Not found"}), 404
+
+    name = str_field(json_object(), "name")
+    error = _name_error(name, scene_id)
+    if error:
+        return error
+
+    old_name = scene.name
+    if name != old_name:
+        # The scene's FPP playlist and any schedule entries are keyed by name.
+        _delete_scene_files(scene)
+        scene.name = name
+        db.session.commit()
+        _write_scene_files(scene)
+        _follow_rename_in_schedule(_playlist_name(old_name), _playlist_name(name))
+    return jsonify(scene.to_dict())
+
+
 @scenes_bp.get("/api/scenes")
 @login_required
 def list_scenes():
@@ -150,15 +201,13 @@ def create_scene():
     data = json_object()
     name = str_field(data, "name")
     zones = data.get("zones", {})
+    links = data.get("saved_colors", {})
+    if not isinstance(links, dict):
+        links = {}
 
-    if not name or len(name) > 64:
-        return jsonify({"error": "Name required (max 64 chars)"}), 400
-    # The name becomes an FPP playlist name, which goes into a URL path
-    # unencoded — same rule effect presets already enforce.
-    if "/" in name or "\\" in name or ".." in name:
-        return jsonify({"error": "Name cannot contain slashes or .."}), 400
-    if Scene.query.filter_by(name=name).first():
-        return jsonify({"error": "A scene with that name already exists"}), 409
+    error = _name_error(name)
+    if error:
+        return error
     if not zones or not isinstance(zones, dict):
         return jsonify({"error": "No zone colors provided"}), 400
 
@@ -172,7 +221,20 @@ def create_scene():
             continue
         if not _HEX_RE.match(str(hex_color)):
             continue
-        db.session.add(SceneZone(scene_id=scene.id, fpp_model=fpp_model, hex_color=hex_color))
+        # Link to a saved color only if the client's color really is that one;
+        # the saved color's own hex then wins so scene and button cannot differ.
+        color = None
+        link = links.get(fpp_model)
+        if isinstance(link, int) and not isinstance(link, bool):
+            color = db.session.get(SavedColor, link)
+            if color and color.hex_value.lower() != str(hex_color).lower():
+                color = None
+        db.session.add(SceneZone(
+            scene_id=scene.id,
+            fpp_model=fpp_model,
+            hex_color=color.hex_value if color else hex_color,
+            saved_color_id=color.id if color else None,
+        ))
         valid_zones += 1
 
     if valid_zones == 0:

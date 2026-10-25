@@ -2,14 +2,14 @@ import re
 import threading
 
 import requests
-from flask import Blueprint, current_app, jsonify, render_template
+from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import db
 from app.auth_utils import login_required
 from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb
 from app.models import (
-    OVERLAY_MODELS, ColorButton, SavedColor, all_is_virtual, all_overlay_models,
-    expand_overlay_models,
+    OVERLAY_MODELS, ColorButton, SavedColor, Scene, SceneZone, all_is_virtual,
+    all_overlay_models, expand_overlay_models,
 )
 from app.routes.settings import selectable_zones
 from app.validation import json_object, page_args, str_field
@@ -169,7 +169,10 @@ def save_color():
     db.session.add(button)
     db.session.commit()
 
-    return jsonify({"id": button.id, "label": button.label, "hex_value": color.hex_value}), 201
+    return jsonify({
+        "id": button.id, "label": button.label,
+        "hex_value": color.hex_value, "saved_color_id": color.id,
+    }), 201
 
 
 @colors_bp.get("/colors/buttons")
@@ -184,9 +187,57 @@ def list_buttons():
         .all()
     )
     return jsonify([
-        {"id": btn.id, "label": btn.label, "hex_value": color.hex_value}
+        {
+            "id": btn.id, "label": btn.label,
+            "hex_value": color.hex_value, "saved_color_id": color.id,
+        }
         for btn, color in rows
     ])
+
+
+def _linked_scene_names(color_id):
+    rows = (
+        db.session.query(Scene.name)
+        .join(SceneZone, SceneZone.scene_id == Scene.id)
+        .filter(SceneZone.saved_color_id == color_id)
+        .distinct().order_by(Scene.name)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+@colors_bp.put("/colors/buttons/<int:button_id>")
+@login_required
+def edit_button(button_id):
+    """Change a saved color's shade; every scene zone linked to it follows.
+
+    Scenes play from the database (the FPP playlist only calls back into the
+    app), so rewriting the zones' hex_color is all it takes — no playlist
+    needs re-registering.
+    """
+    data = json_object()
+    hex_val = data.get("hex", "")
+    if not _HEX_RE.match(hex_val):
+        return jsonify({"error": "Invalid hex color"}), 400
+    name = str_field(data, "name") if "name" in data else None
+    if name is not None and (not name or len(name) > 64):
+        return jsonify({"error": "Name is required (max 64 chars)"}), 400
+
+    btn = db.session.get(ColorButton, button_id)
+    color = db.session.get(SavedColor, btn.saved_color_id) if btn else None
+    if not color:
+        return jsonify({"error": "Not found"}), 404
+
+    if name is not None:
+        btn.label = name
+        color.name = name
+    color.hex_value = hex_val
+    db.session.query(SceneZone).filter_by(saved_color_id=color.id).update(
+        {SceneZone.hex_color: hex_val}, synchronize_session=False,
+    )
+    scenes = _linked_scene_names(color.id)
+    db.session.commit()
+    return jsonify({"ok": True, "hex_value": hex_val, "label": btn.label, "scenes": scenes})
 
 
 @colors_bp.delete("/colors/buttons/<int:button_id>")
@@ -197,13 +248,26 @@ def delete_button(button_id):
         return jsonify({"error": "Not found"}), 404
 
     color_id = btn.saved_color_id
-    db.session.delete(btn)
+    remaining = db.session.query(ColorButton).filter(
+        ColorButton.saved_color_id == color_id, ColorButton.id != btn.id,
+    ).count()
 
-    remaining = db.session.query(ColorButton).filter_by(saved_color_id=color_id).count()
     if remaining == 0:
+        # The color itself goes with its last button.  Scenes keep the shade
+        # they have but stop following it; make the caller say so.
+        scenes = _linked_scene_names(color_id)
+        if scenes and request.args.get("detach") != "1":
+            return jsonify({
+                "error": "Scenes use this color: " + ", ".join(scenes),
+                "scenes": scenes,
+            }), 409
+        db.session.query(SceneZone).filter_by(saved_color_id=color_id).update(
+            {SceneZone.saved_color_id: None}, synchronize_session=False,
+        )
         color = db.session.get(SavedColor, color_id)
         if color:
             db.session.delete(color)
+    db.session.delete(btn)
 
     db.session.commit()
     return jsonify({"ok": True})

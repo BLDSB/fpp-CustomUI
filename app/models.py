@@ -219,9 +219,17 @@ class SceneZone(db.Model):
     scene_id = db.Column(db.Integer, db.ForeignKey("scenes.id"), nullable=False, index=True)
     fpp_model = db.Column(db.String(32), nullable=False)
     hex_color = db.Column(db.String(7), nullable=False)
+    # Set when the zone was filled from a saved color button.  hex_color stays
+    # the colour the zone actually plays; editing the saved color rewrites it
+    # (see colors.edit_button), so a linked scene follows the saved color.
+    saved_color_id = db.Column(db.Integer, db.ForeignKey("saved_colors.id"), nullable=True)
 
     def to_dict(self):
-        return {"fpp_model": self.fpp_model, "hex_color": self.hex_color}
+        return {
+            "fpp_model": self.fpp_model,
+            "hex_color": self.hex_color,
+            "saved_color_id": self.saved_color_id,
+        }
 
 
 

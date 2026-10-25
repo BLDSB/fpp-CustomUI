@@ -943,10 +943,14 @@ def _restore_colors(data):
         new_sid = color_id_map.get(b.get("saved_color_id"))
         if new_sid:
             db.session.add(ColorButton(label=str(b.get("label", ""))[:64], saved_color_id=new_sid))
+    return color_id_map
 
 
-def _restore_scenes(data):
+def _restore_scenes(data, color_id_map=None):
     """Replace all scenes and regenerate their FPP playlists."""
+    # A bulk delete skips the ORM cascade; left behind, the old zones would be
+    # picked up by whichever new scene SQLite hands the same id to.
+    SceneZone.query.delete()
     Scene.query.delete()
     db.session.flush()
 
@@ -978,10 +982,14 @@ def _restore_scenes(data):
                     fpp_model, hex_color, name,
                 )
                 continue
+            # Older backups have no link; a link to a color the backup did not
+            # carry falls back to the plain hex.
             db.session.add(SceneZone(
                 scene_id=new_scene.id,
                 fpp_model=fpp_model,
                 hex_color=hex_color,
+                saved_color_id=(color_id_map or {}).get(z["saved_color_id"])
+                if isinstance(z.get("saved_color_id"), int) else None,
             ))
         db.session.flush()
         try:
@@ -1103,8 +1111,8 @@ def apply_ui_backup(data):
     _restore_zones(data)
     _restore_zone_layouts(data)
     _restore_zone_members(data)
-    _restore_colors(data)
-    _restore_scenes(data)
+    color_id_map = _restore_colors(data)
+    _restore_scenes(data, color_id_map)
     _restore_effect_presets(data)
     _restore_custom_playlists(data)
 
