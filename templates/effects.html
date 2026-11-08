@@ -368,6 +368,12 @@
         <button class="btn-stop" id="btn-stop-effect">Stop Effects</button>
     </div>
     <div class="arg-grid" id="effect-args-form"></div>
+    <div class="arg-field" style="max-width:22rem;margin-top:.75rem">
+        <span class="arg-label">Colour gamma (1.0 = off)</span>
+        <input type="number" id="effect-gamma" min="1" max="3" step="0.1" value="{{ '%.1f'|format(effect_gamma) }}">
+        <span class="arg-hint">Darkens mid-tones in the colours you pick so they look
+            richer on the lights. Raise it if effects look washed out. Does not affect palettes.</span>
+    </div>
     <div class="pixel-preview" id="pixel-preview" hidden>
         <canvas id="pixel-strip" aria-hidden="true"></canvas>
         <div class="pixel-preview-caption">
@@ -424,6 +430,13 @@
         }
         return resp.json();
     }
+
+    document.getElementById('effect-gamma').addEventListener('change', async (e) => {
+        const v = parseFloat(e.target.value);
+        if (!isFinite(v) || v < 1 || v > 3) { e.target.value = '{{ "%.1f"|format(effect_gamma) }}'; return; }
+        try { await apiFetch('/api/settings', 'POST', { effect_gamma: String(v) }); }
+        catch (err) { alert('Could not save gamma: ' + err.message); }
+    });
 
     function escHtml(s) {
         return String(s).replace(/[&<>"']/g, c =>

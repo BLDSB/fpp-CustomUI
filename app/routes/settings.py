@@ -28,7 +28,7 @@ settings_bp = Blueprint("settings", __name__)
 _ALLOWED_KEYS = {
     "bg_image_url", "logo_url", "site_name",
     "accent_color", "nav_color", "nav_link_color", "text_color",
-    "genius_pro_count",
+    "genius_pro_count", "effect_gamma",
     *{f"genius_pro_url_{i}" for i in range(1, 9)},
     "alert_enabled", "alert_smtp_host", "alert_smtp_port",
     "alert_smtp_user", "alert_smtp_pass",
@@ -117,6 +117,14 @@ def save_settings():
                 return jsonify({"error": "Alert delay must be 1–1440 minutes"}), 400
             if key == "genius_pro_count" and not 0 <= n <= 8:
                 return jsonify({"error": "Controller count must be 0–8"}), 400
+
+        if key == "effect_gamma" and value:
+            try:
+                g = float(value)
+            except (TypeError, ValueError):
+                return jsonify({"error": "Effect gamma must be a number"}), 400
+            if not 1.0 <= g <= 3.0:
+                return jsonify({"error": "Effect gamma must be 1.0–3.0"}), 400
 
         if key in _UPCOMING_RANGES and value:
             lo, hi, label = _UPCOMING_RANGES[key]

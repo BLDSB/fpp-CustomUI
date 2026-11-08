@@ -1,4 +1,5 @@
 import json
+import re
 from urllib.parse import quote
 
 import requests
@@ -8,7 +9,7 @@ from app import db
 from app.auth_utils import internal_token_error, login_required
 from app.fpp_api import ensure_models_active, fpp_error_text, fpp_url, playlist_url
 from app.fpp_playlist import build_playlist_def, effect_entries
-from app.models import EffectPreset, expand_overlay_models
+from app.models import AppSetting, EffectPreset, expand_overlay_models
 from app.routes.settings import selectable_zones
 from app.validation import json_object, page_args
 
@@ -80,8 +81,46 @@ def _str_list(value):
     return [str(v) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
 
 
+# ── Colour gamma ─────────────────────────────────────────────────────────────
+# WLED expects its output to be gamma-corrected on the way to the LEDs; fppd's
+# overlay path sends the raw values.  On a controller whose gamma is tuned for
+# xLights sequences, mid-tone channels (e.g. the 128 in orange) then render too
+# bright and the colour looks pale.  Pure primaries are unaffected.  Colours the
+# user picks are therefore passed through value ** gamma before being sent.
+# 1.0 turns the correction off.  Palette-driven colours are built inside WLED
+# and cannot be corrected here.
+EFFECT_GAMMA_KEY     = "effect_gamma"
+EFFECT_GAMMA_DEFAULT = 2.2
+EFFECT_GAMMA_MIN     = 1.0
+EFFECT_GAMMA_MAX     = 3.0
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def get_effect_gamma():
+    try:
+        row = db.session.get(AppSetting, EFFECT_GAMMA_KEY)
+        if row is not None and row.value not in (None, ""):
+            g = float(row.value)
+            if EFFECT_GAMMA_MIN <= g <= EFFECT_GAMMA_MAX:
+                return g
+    except Exception:
+        pass
+    return EFFECT_GAMMA_DEFAULT
+
+
+def apply_gamma_to_hex(value, gamma):
+    """Return ``value`` (a #RRGGBB string) with each channel raised to ``gamma``."""
+    if gamma == 1.0 or not isinstance(value, str) or not _HEX_COLOR_RE.match(value):
+        return value
+    chans = [int(value[i:i + 2], 16) for i in (1, 3, 5)]
+    out = [int(round(255 * (c / 255) ** gamma)) for c in chans]
+    return "#{:02X}{:02X}{:02X}".format(*out)
+
+
 def _post_effect(targets, effect, args):
     """POST one 'Overlay Model Effect' command naming ``targets``."""
+    gamma = get_effect_gamma()
+    args = [apply_gamma_to_hex(a, gamma) if isinstance(a, str) else a for a in args]
     command = {
         "command": "Overlay Model Effect",
         "multisyncCommand": False,
@@ -160,7 +199,8 @@ def effects_page():
         "min":     WLED_GAIN_MIN,
         "max":     WLED_GAIN_MAX,
     }
-    return render_template("effects.html", zones=selectable_zones(), gain=gain)
+    return render_template("effects.html", zones=selectable_zones(), gain=gain,
+                           effect_gamma=get_effect_gamma())
 
 
 @effects_bp.get("/api/effects/list")
