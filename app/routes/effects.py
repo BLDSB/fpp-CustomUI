@@ -23,13 +23,13 @@ effects_bp = Blueprint("effects", __name__)
 # the stock 0-255 slider could only ever double it.
 #
 # The UI therefore drives that arg as a gain: 128 is 100%, the slider runs to
-# 400%, and a freshly picked effect starts at 300%.  fppd does not range-check
+# 400%, and a freshly picked effect starts at 100%.  fppd does not range-check
 # command args — the min/max on a CommandArg is metadata for its own UI, and
 # ApplyEffectOverlayCommand hands the strings straight to the effect — so a
 # value above 255 is applied as written.  If a future fppd ever clamps it, the
 # gain simply tops out at 200% again, still brighter than the old default.
 WLED_GAIN_UNITY   = 128   # 100% — FPP's own default, and unity gain
-WLED_GAIN_DEFAULT = 384   # 300% — what a newly selected effect starts at
+WLED_GAIN_DEFAULT = 128   # 100% — unity gain, FPP's own default
 WLED_GAIN_MIN     = 32    #  25%
 WLED_GAIN_MAX     = 512   # 400%
 
