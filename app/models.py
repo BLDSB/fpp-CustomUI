@@ -238,9 +238,18 @@ class SceneZone(db.Model):
     # 0-255 white level, or NULL for a zone saved before white existed (those
     # leave the white channel alone, exactly as they always did).
     white = db.Column(db.Integer, nullable=True)
+    # Set when the zone was filled from a saved color button.  hex_color stays
+    # the colour the zone actually plays; editing the saved color rewrites it
+    # (see colors.edit_button), so a linked scene follows the saved color.
+    saved_color_id = db.Column(db.Integer, db.ForeignKey("saved_colors.id"), nullable=True)
 
     def to_dict(self):
-        return {"fpp_model": self.fpp_model, "hex_color": self.hex_color, "white": self.white}
+        return {
+            "fpp_model": self.fpp_model,
+            "hex_color": self.hex_color,
+            "white": self.white,
+            "saved_color_id": self.saved_color_id,
+        }
 
 
 

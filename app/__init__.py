@@ -92,6 +92,7 @@ def _add_missing_columns(app):
         # White level for RGBW zones; NULL = saved before white existed.
         ("saved_colors", "white", "INTEGER"),
         ("scene_zones", "white", "INTEGER"),
+        ("scene_zones", "saved_color_id", "INTEGER"),
     ]
     from sqlalchemy import text
     for table, column, ddl in wanted:
