@@ -46,7 +46,9 @@ class Sender(unittest.TestCase):
         self.assertEqual(report, {
             "plugin": "abc1234", "fppd": "running", "state": "playing", "playlist": "Evening Show",
             "fpp": "9.5.3", "cpu_temp_c": 61.2, "uptime_s": 3600.5, "disk_pct": 12.3,
-            "throttled": "0x0", "undervoltage": False, "undervoltage_ever": False})
+            "throttled": "0x0", "undervoltage": False, "undervoltage_ever": False,
+            # fleet fields: owner's two options and a count of recent playlist runs
+            "maintenance": True, "backup_opt_in": False, "shows_30d": 0})
 
     def test_report_carries_no_credentials_or_lighting_content(self):
         text = json.dumps(self.collect(status={**STATUS, "secret_pin": "PIN-9X7Z", "scenes": ["x"]}))

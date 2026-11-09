@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture
 def client(app_factory, fpp):
-    client = app_factory().test_client()
+    client = app_factory(settle=True).test_client()
     with client.session_transaction() as s:
         s["logged_in"] = True
     return client

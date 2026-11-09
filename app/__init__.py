@@ -340,6 +340,9 @@ def _register_blueprints(app):
     from app.routes.network import network_bp
     app.register_blueprint(network_bp)
 
+    from app.routes.overrides import override_bp
+    app.register_blueprint(override_bp)
+
 
 def _start_background_workers(app):
     """Start the daemon threads (FPP startup sync, alert monitor, remote heartbeat).
@@ -361,21 +364,23 @@ def _register_template_and_error_handlers(app):
     """Install the site-settings context processor and the 500 handler."""
     @app.context_processor
     def inject_site_settings():
+        from flask import session
         from app.models import AppSetting
         from app.ui_path import reanchor_upload_url
+        is_staff = bool(session.get("is_staff"))
         try:
             settings = {s.key: s.value for s in AppSetting.query.all()}
         except Exception:
             # A broken DB must not take down every page render (login included).
             app.logger.exception("Could not load site settings for template render")
-            return {"site_settings": {}}
+            return {"site_settings": {}, "is_staff": is_staff}
         # Uploaded images are stored as absolute URLs, so they carry whichever
         # URL prefix was live when they were uploaded. Re-anchor them to the
         # current one, or they 404 after the install is moved to a new path.
         for key in ("logo_url", "bg_image_url"):
             if settings.get(key):
                 settings[key] = reanchor_upload_url(settings[key])
-        return {"site_settings": settings}
+        return {"site_settings": settings, "is_staff": is_staff}
 
     @app.errorhandler(500)
     def _internal_error(error):
@@ -423,6 +428,8 @@ def create_app():
     _register_blueprints(app)
     from app.security import init_security
     init_security(app)
+    from app.audit import init_audit
+    init_audit(app)
 
     _start_background_workers(app)
 

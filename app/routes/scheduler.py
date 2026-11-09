@@ -42,6 +42,16 @@ def _load_schedule():
     return data.get("schedule", [])
 
 
+def _paused_response():
+    """A 409 while the schedule is paused (edits would be lost when it is restored), else None."""
+    from app import overrides, showlog
+    until = overrides.paused_until()
+    if until is None:
+        return None
+    return jsonify({"error": f"The schedule is paused until {showlog.fmt(until)}. "
+                             "Resume it on the Controls page before changing it."}), 409
+
+
 def _save_schedule(entries):
     """POST the full schedule back to FPP and reload it."""
     resp = requests.post(fpp_url("/schedule"), json=entries, timeout=5)
@@ -258,6 +268,9 @@ def list_schedule():
 @scheduler_bp.post("/api/schedule/entry")
 @login_required
 def add_entry():
+    paused = _paused_response()
+    if paused:
+        return paused
     fields, error = _validate(json_object())
     if error:
         return jsonify({"error": error}), 400
@@ -273,6 +286,9 @@ def add_entry():
 @scheduler_bp.put("/api/schedule/entry/<int:idx>")
 @login_required
 def update_entry(idx):
+    paused = _paused_response()
+    if paused:
+        return paused
     fields, error = _validate(json_object())
     if error:
         return jsonify({"error": error}), 400
@@ -291,6 +307,9 @@ def update_entry(idx):
 @login_required
 def move_entry(idx):
     """Move an entry up/down the list. FPP gives earlier entries higher priority."""
+    paused = _paused_response()
+    if paused:
+        return paused
     direction = (json_object()).get("direction")
     if direction not in ("up", "down", "top", "bottom"):
         return jsonify({"error": "direction must be up, down, top or bottom"}), 400
@@ -311,6 +330,9 @@ def move_entry(idx):
 @scheduler_bp.delete("/api/schedule/entry/<int:idx>")
 @login_required
 def delete_entry(idx):
+    paused = _paused_response()
+    if paused:
+        return paused
     try:
         entries = _load_schedule()
         if idx < 0 or idx >= len(entries):

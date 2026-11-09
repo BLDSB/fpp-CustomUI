@@ -10,6 +10,7 @@ exercise real routes end to end without a controller.
 """
 import os
 import re
+import threading
 from urllib.parse import unquote
 from unittest import mock
 
@@ -197,8 +198,18 @@ def app_factory():
     """Build isolated apps (own in-memory DB); use ``provisioned=False`` for first-run."""
     from app import create_app
 
-    def make(provisioned=True):
+    def make(provisioned=True, settle=False):
         app = create_app()
+        if settle:
+            # The startup sync thread rewrites playlists through the same
+            # in-memory connection the test is about to use.  Left running, its
+            # rollbacks can discard another test's uncommitted rows (a rare
+            # "instance has been deleted" failure).  Only worth waiting for when
+            # FPP is faked (the ``fpp`` fixture): it then finishes at once,
+            # whereas without it the thread retries with backoff for minutes.
+            for thread in threading.enumerate():
+                if thread.name == "fpp-startup-sync":
+                    thread.join(timeout=10)
         app.config["ADMIN_PASSWORD_HASH"] = "x" if provisioned else ""
         return app
 

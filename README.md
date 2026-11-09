@@ -11,7 +11,11 @@ A mobile-friendly, password-protected control panel for [Falcon Pi Player](https
 - **Scenes** — save named color combinations across multiple zones and recall them instantly
 - **Scheduler** — view, create, and edit FPP schedule entries including solar-time events
 - **Settings** — customize site name, colors, background, and zone display names
-- **Password management** — change your login password from the Settings page
+- **Show tools** — skip tonight's show, pause the schedule for a while, run a playlist for a set time, and a one-tap "check my show" before the evening
+- **Staff PIN** — an optional second PIN that opens Controls, Color and Effects only
+- **Activity log** — who signed in and what was changed, and when
+- **BLD Remote** — optional remote monitoring through the BLD portal: status, health alerts, restarts and updates, and settings backups
+- **PIN management** — change your 4-digit PIN from the Settings page
 - **Port 80 access** — available at `http://<pi-ip>/CustomUI` alongside the standard FPP UI
 - **Per-deployment URL** — rename the path for each install, e.g. `http://<pi-ip>/cityname`
 
@@ -33,10 +37,10 @@ A mobile-friendly, password-protected control panel for [Falcon Pi Player](https
    https://raw.githubusercontent.com/BLDSB/fpp-CustomUI/main/pluginInfo.json
    ```
 3. Click **Install**
-4. Watch the progress popup — your **initial login password** will be displayed there
-5. Navigate to `http://<pi-ip>/CustomUI` and log in
+4. Watch the progress popup until it finishes
+5. Open `http://<pi-ip>/CustomUI` from a device on the same network and choose a 4-digit PIN (first-run setup)
 
-> Change the auto-generated password immediately after first login via **Settings → Security**.
+> Lost the PIN? Run `sudo bash fpp_reset_pin.sh` on the controller to start first-run setup again.
 
 ---
 
@@ -52,7 +56,7 @@ bash scripts/setup.sh
 The setup script will:
 - Create a Python virtual environment and install dependencies
 - Generate a `.env` file with random secrets
-- Prompt you to set an admin password
+- Leave the PIN unset so first-run setup asks for one
 - Install and start the `fpp-ui` systemd service
 - Configure the Apache reverse proxy at `/CustomUI` (renameable — see below)
 

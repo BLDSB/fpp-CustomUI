@@ -1239,6 +1239,47 @@ def remote_disconnect():
     return jsonify({"ok": True})
 
 
+@settings_bp.get("/api/remote/options")
+@login_required
+def remote_options():
+    from app import fleet_agent, remote_backup, showlog
+    app = current_app._get_current_object()
+    last = remote_backup.last_backup(app)
+    return jsonify({
+        "maintenance": fleet_agent.maintenance_enabled(app),
+        "backup": remote_backup.opted_in(app),
+        "backup_at": showlog.fmt(last) if last else "",
+    })
+
+
+@settings_bp.post("/api/remote/options")
+@login_required
+def set_remote_options():
+    """Owner's choices: allow BLD maintenance actions, and send a nightly settings backup."""
+    from app import fleet_agent, remote_backup
+    data = json_object()
+    app = current_app._get_current_object()
+    for field, key in (("maintenance", fleet_agent.MAINTENANCE_KEY), ("backup", remote_backup.OPT_IN_KEY)):
+        if field in data:
+            value = "1" if data[field] else "0"
+            row = db.session.get(AppSetting, key)
+            if row is None:
+                db.session.add(AppSetting(key=key, value=value))
+            else:
+                row.value = value
+    db.session.commit()
+    if data.get("backup"):
+        threading.Thread(target=remote_backup.push, args=(app,), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@settings_bp.get("/api/audit")
+@login_required
+def activity_log():
+    from app import audit
+    return jsonify({"entries": audit.recent(100)})
+
+
 # ── Alert email ──────────────────────────────────────────────────────────────
 
 @settings_bp.post("/api/alerts/test")

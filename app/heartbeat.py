@@ -107,9 +107,10 @@ def _plugin_revision():
     return _plugin_rev
 
 
-def collect(app):
+def collect(app, status=None):
     """The report. Missing readings are simply left out."""
-    status = _fetch_status(app)
+    if status is None:
+        status = _fetch_status(app)
     report = {"plugin": _plugin_revision()}
     if status is None:
         report["fppd"] = "down"
@@ -125,17 +126,36 @@ def collect(app):
         if value is not None:
             report[key] = round(value, 1)
     report.update(_power())
+    from app import fleet_agent
+    report.update(fleet_agent.report_extras(app, status))
     return report
 
 
 def send(app):
     """One heartbeat. Returns True if the hub accepted it; never raises."""
     global _last_warning
+    from app import fleet_agent
     url = app.config.get("HEARTBEAT_URL") or hub_url()
     try:
-        resp = requests.post(url, data=json.dumps(collect(app)), timeout=5,
+        body = collect(app)
+        events = fleet_agent.pending_events()
+        results = fleet_agent.pending_results(app)
+        if events:
+            body["events"] = events
+        if results:
+            body["command_results"] = results
+        resp = requests.post(url, data=json.dumps(body), timeout=5,
                              headers={"Content-Type": "application/json"})
         resp.raise_for_status()
+        # The portal has them now; forget them so they are not sent again.
+        fleet_agent.ack_events([e["key"] for e in events])
+        fleet_agent.ack_results(app, [r["id"] for r in results])
+        try:
+            reply = resp.json()
+        except ValueError:
+            reply = {}
+        if isinstance(reply, dict) and reply.get("commands"):
+            fleet_agent.handle_commands(app, reply["commands"], report=lambda: send(app))
         return True
     except Exception as exc:
         # A down tunnel is expected whenever the network is; say so at most every half hour.
@@ -151,6 +171,8 @@ def _loop(app):
         try:
             if enrolled():
                 send(app)
+                from app import remote_backup
+                remote_backup.maybe_nightly(app)
         except Exception:
             _logger.exception("Heartbeat unexpected error")
         time.sleep(INTERVAL_SECONDS)
