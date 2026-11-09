@@ -349,12 +349,24 @@ def _send_due_alerts(settings, due, status):
             _alert_not_playing(settings, playlist)
 
 
+def _housekeeping(app, status, now):
+    """Work that runs every poll whether or not email alerts are on: the show log and
+    the timers behind a schedule pause or a timed run."""
+    try:
+        from app import overrides, showlog
+        showlog.observe(app, status, now)
+        overrides.tick(app, status, now)
+    except Exception:
+        _logger.exception("Alert monitor: housekeeping failed")
+
+
 def _process(app):
     """One monitor poll: read fppd's state, update what we watch, alert on misses."""
     global _expected, _last_poll, _fppd_reachable, _status_failures
 
     settings = _load_settings(app)
     if settings.get("alert_enabled") != "1":
+        _housekeeping(app, _fetch_status(app), time.time())
         with _lock:
             _pending.clear()
             _handled.clear()
@@ -364,6 +376,7 @@ def _process(app):
     delay_min = _to_int(settings.get("alert_delay_minutes"), 5, lo=1, hi=1440)
     status = _fetch_status(app)
     now = time.time()
+    _housekeeping(app, status, now)
 
     with _lock:
         _status_failures = 0 if status is not None else _status_failures + 1
@@ -385,8 +398,18 @@ def _process(app):
         _logger.exception("Alert monitor: upcoming-reminder pass failed")
 
 
+def _queue_remote_event(kind: str, detail: str):
+    """Tell BLD's portal too (only does anything on an enrolled controller)."""
+    try:
+        from app import fleet_agent
+        fleet_agent.queue_event(kind, detail)
+    except Exception:
+        _logger.exception("Could not queue the remote event")
+
+
 def _alert_not_playing(settings: dict, playlist_name: str):
     now_str = datetime.now().strftime("%I:%M %p")
+    _queue_remote_event("missed_show", f"{playlist_name} was due but is not playing")
     _send_email(
         settings,
         f"Show Alert: '{playlist_name}' is not playing",
@@ -399,6 +422,7 @@ def _alert_not_playing(settings: dict, playlist_name: str):
 
 def _alert_fppd_down(settings: dict, playlist_name: str):
     now_str = datetime.now().strftime("%I:%M %p")
+    _queue_remote_event("fppd_down", f"{playlist_name} was due and the player is not responding")
     _send_email(
         settings,
         "Show Alert: the player is not responding",

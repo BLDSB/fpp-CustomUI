@@ -25,6 +25,7 @@ in-memory fake (`FakeFPP`). Nothing is written outside `tests/`.
 | `tests/test_security.py` | CSRF origin check, security headers, every route requires a session, token handling, image upload content checks, rate limits, wrong-typed JSON |
 | `tests/test_performance.py` | Query counts (no N+1), paging limits, FK indexes, the shared status cache |
 | `tests/test_upcoming.py` | Upcoming-show reminder timing and wording |
+| `tests/test_fleet_agent.py` | BLD fleet features: activity log, staff PIN (walks every route), schedule pause and timed run, show log, remote maintenance actions, settings backup and restore, show check |
 
 If a test fails after an edit, treat it as "the edit changed behavior" first and
 "the test is out of date" second. Update a test only when the behavior change was

@@ -10,7 +10,7 @@ import time
 from functools import wraps
 from urllib.parse import urlsplit
 
-from flask import current_app, jsonify, request
+from flask import current_app, jsonify, redirect, request, session, url_for
 from werkzeug.exceptions import HTTPException
 
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -106,7 +106,42 @@ def _csrf_blocked():
     return not (_behind_proxy_without_host() and _is_local_host(origin_host))
 
 
+# What a staff session (the optional second PIN) may reach: day-to-day show operation only.
+# Anything not named here, including every page and call that changes settings, the
+# schedule, playlists or backups, is refused. A test walks every route to keep this honest.
+STAFF_ALLOWED = frozenset({
+    "main.controls", "main.get_brightness", "main.set_brightness", "main.terms",
+    "auth.login", "auth.logout", "auth.accept_terms", "static",
+    "colors.colors_page", "colors.list_buttons", "colors.send_color", "colors.stop_color",
+    "effects.effects_page", "effects.get_effect_args", "effects.get_fonts", "effects.list_effects",
+    "effects.list_presets", "effects.run_effect", "effects.stop_effect",
+    "playlists.fpp_status", "playlists.list_playlists", "playlists.list_sequences",
+    "playlists.play_playlist", "playlists.play_sequence", "playlists.playlists_with_audio",
+    "playlists.release_overlays", "playlists.stop_playback",
+    "scenes.apply_scene", "scenes.list_scenes",
+    "scheduler.schedule_preview",
+    "overrides.get_override", "overrides.pause", "overrides.resume", "overrides.run",
+    "overrides.cancel_run", "overrides.showcheck",
+})
+
+
+def _staff_blocked():
+    """True when a staff session asks for something outside STAFF_ALLOWED."""
+    if not session.get("is_staff") or request.endpoint is None:
+        return False
+    if request.path.startswith("/internal/"):           # token-authenticated, no session
+        return False
+    return request.endpoint not in STAFF_ALLOWED
+
+
 def init_security(app):
+    @app.before_request
+    def _staff_gate():
+        if _staff_blocked():
+            if _is_api_request() or request.method != "GET":
+                return jsonify({"error": "Your PIN does not allow that.", "staff_blocked": True}), 403
+            return redirect(url_for("main.controls"))
+
     @app.before_request
     def _reject_cross_site_writes():
         if _csrf_blocked():

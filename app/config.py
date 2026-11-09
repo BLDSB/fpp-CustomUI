@@ -47,6 +47,8 @@ class Config:
     FPP_BASE_URL = _clean_base_url(os.environ.get("FPP_BASE_URL"))
     ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", "")
     MASTER_PIN_HASH = os.environ.get("MASTER_PIN_HASH", "")
+    # Optional second PIN for staff: Controls, Color and Effects only.
+    STAFF_PIN_HASH = os.environ.get("STAFF_PIN_HASH", "")
     SQLALCHEMY_DATABASE_URI = _db_uri
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     # Lax keeps the session cookie off cross-site POSTs; HttpOnly keeps it away

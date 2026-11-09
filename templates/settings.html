@@ -411,6 +411,12 @@
                 Disconnecting stops remote access from this controller. To remove the site
                 from the portal as well, ask your administrator to revoke it there.
             </span>
+            <div class="form-field" id="remote-options" style="margin-top:14px">
+                <label><input type="checkbox" id="opt-maintenance"> Allow BLD to run maintenance actions</label>
+                <span class="hint">Restart the control panel or show player, reboot, update the software, clear stuck lights, or restore a backup you sent. BLD queues these in the portal; this controller collects them. Every one is recorded in the Activity log below.</span>
+                <label style="margin-top:8px"><input type="checkbox" id="opt-backup"> Send a settings backup to BLD every night</label>
+                <span class="hint">Your settings, scenes, playlists and branding (not sequences or music), kept encrypted at BLD so a replacement controller can be set up quickly. It contains your PIN hashes. <span id="opt-backup-at"></span></span>
+            </div>
         </div>
     </div>
 
@@ -961,6 +967,14 @@
         </div>
     </div>
 
+    <!-- Activity log -->
+    <div class="settings-card" id="activity-card">
+        <h2>Activity log</h2>
+        <span class="hint">The last changes made on this controller: logins, settings, schedule edits, PIN changes and remote maintenance. PINs and other secrets are never recorded.</span>
+        <div style="margin-top:10px"><button id="btn-activity" class="btn-save">Show recent activity</button></div>
+        <div id="activity-list" style="margin-top:12px;overflow-x:auto"></div>
+    </div>
+
     <!-- Security -->
     <div class="settings-card">
         <h2>Security</h2>
@@ -989,6 +1003,22 @@
 
         <div>
             <button id="btn-change-pw" class="btn-save">Change PIN</button>
+        </div>
+    </div>
+
+    <!-- Staff PIN -->
+    <div class="settings-card" id="staff-card">
+        <h2>Staff PIN</h2>
+        <span class="hint" id="staff-state">Checking&hellip;</span>
+        <p class="hint">A second 4-digit PIN for people who run the show but should not change it. It opens Controls, Color and Effects, plus Skip tonight&rsquo;s show and Check my show. It cannot reach the schedule, playlists, settings or backups.</p>
+        <div class="form-field">
+            <label for="s-staff-new">Staff PIN</label>
+            <input type="password" id="s-staff-new" maxlength="4" inputmode="numeric"
+                   pattern="\d{4}" autocomplete="new-password" placeholder="&bull;&bull;&bull;&bull;">
+        </div>
+        <div>
+            <button id="btn-staff-set" class="btn-save">Set Staff PIN</button>
+            <button id="btn-staff-clear" class="btn-save" style="display:none">Remove Staff PIN</button>
         </div>
     </div>
 
@@ -2635,5 +2665,79 @@
 
         load();
     })();
+</script>
+<script>
+(function () {
+    const root = window.APP_ROOT || '';
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    async function call(url, method, body) {
+        const opts = { method: method || 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } };
+        if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+        const r = await fetch(root + url, opts);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        return data;
+    }
+    const toast = (m, t) => (window.showToast ? window.showToast(m, t) : alert(m));
+
+    // Remote access options
+    async function loadOptions() {
+        try {
+            const o = await call('/api/remote/options');
+            $('opt-maintenance').checked = !!o.maintenance;
+            $('opt-backup').checked = !!o.backup;
+            $('opt-backup-at').textContent = o.backup_at ? 'Last sent ' + o.backup_at + '.' : '';
+        } catch (e) { /* card is hidden when not enrolled */ }
+    }
+    for (const [id, key] of [['opt-maintenance', 'maintenance'], ['opt-backup', 'backup']]) {
+        $(id).addEventListener('change', async e => {
+            try { await call('/api/remote/options', 'POST', { [key]: e.target.checked }); toast('Saved.', 'success'); }
+            catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'error'); }
+        });
+    }
+    loadOptions();
+
+    // Staff PIN
+    async function loadStaff() {
+        try {
+            const s = await call('/api/staff-pin');
+            $('staff-state').textContent = s.set ? 'A staff PIN is set.' : 'No staff PIN is set.';
+            $('btn-staff-clear').style.display = s.set ? '' : 'none';
+            $('btn-staff-set').textContent = s.set ? 'Change Staff PIN' : 'Set Staff PIN';
+        } catch (e) { $('staff-state').textContent = ''; }
+    }
+    $('btn-staff-set').addEventListener('click', async () => {
+        try {
+            await call('/api/set-staff-pin', 'POST', { new_pin: $('s-staff-new').value });
+            $('s-staff-new').value = '';
+            toast('Staff PIN saved.', 'success');
+            loadStaff();
+        } catch (e) { toast(e.message, 'error'); }
+    });
+    $('btn-staff-clear').addEventListener('click', async () => {
+        if (!confirm('Remove the staff PIN? Staff will no longer be able to sign in.')) return;
+        try { await call('/api/clear-staff-pin', 'POST', {}); toast('Staff PIN removed.', 'success'); loadStaff(); }
+        catch (e) { toast(e.message, 'error'); }
+    });
+    loadStaff();
+
+    // Activity log
+    $('btn-activity').addEventListener('click', async () => {
+        const box = $('activity-list');
+        box.textContent = 'Loading\u2026';
+        try {
+            const data = await call('/api/audit');
+            if (!data.entries.length) { box.textContent = 'Nothing recorded yet.'; return; }
+            box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.82rem"><thead><tr>' +
+                '<th style="text-align:left;padding:4px 8px">When</th><th style="text-align:left;padding:4px 8px">Who</th>' +
+                '<th style="text-align:left;padding:4px 8px">What</th><th style="text-align:left;padding:4px 8px">From</th></tr></thead><tbody>' +
+                data.entries.map(e => '<tr><td style="padding:4px 8px;white-space:nowrap">' + esc(new Date(e.at * 1000).toLocaleString()) +
+                    '</td><td style="padding:4px 8px">' + esc(e.actor) + '</td><td style="padding:4px 8px">' + esc(e.action) +
+                    (e.detail ? ' \u2014 ' + esc(e.detail) : '') + '</td><td style="padding:4px 8px">' + esc(e.ip) + '</td></tr>').join('') +
+                '</tbody></table>';
+        } catch (e) { box.textContent = e.message; }
+    });
+})();
 </script>
 {% endblock %}

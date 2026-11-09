@@ -534,3 +534,26 @@ def get_all_zones():
                     z = Zone(slot=slot, display_name=name, hidden=False)
                 zones.append(z)
     return zones
+
+
+class ShowLog(db.Model):
+    """One run of a playlist, as seen by the monitor. Feeds "last show" and the
+    playlist-run count in the remote status report."""
+    __tablename__ = "show_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    playlist = db.Column(db.String(128), nullable=False)
+    started_at = db.Column(db.Integer, nullable=False, index=True)   # Unix epoch
+    ended_at = db.Column(db.Integer, nullable=True)
+
+
+class AuditLog(db.Model):
+    """Activity log: who changed what on this controller, and when."""
+    __tablename__ = "audit_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.Integer, nullable=False, index=True)           # Unix epoch
+    actor = db.Column(db.String(24), nullable=False, default="")
+    action = db.Column(db.String(60), nullable=False)
+    detail = db.Column(db.String(200), nullable=False, default="")
+    ip = db.Column(db.String(64), nullable=False, default="")

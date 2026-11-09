@@ -357,14 +357,14 @@
                 <ul class="nav-dropdown-menu">
                     <li><a href="{{ url_for('colors.colors_page') }}">Color</a></li>
                     <li><a href="{{ url_for('effects.effects_page') }}">Effects</a></li>
-                    <li><a href="{{ url_for('custom_playlists.playlists_page') }}">Playlists</a></li>
+                    {% if not is_staff %}<li><a href="{{ url_for('custom_playlists.playlists_page') }}">Playlists</a></li>{% endif %}
                 </ul>
             </li>
-            <li><a href="{{ url_for('scheduler.schedule_page') }}">Schedule</a></li>
+            {% if not is_staff %}<li><a href="{{ url_for('scheduler.schedule_page') }}">Schedule</a></li>{% endif %}
         </ul>
         <ul class="nav-utils">
             <li><span id="nav-clock" class="nav-clock">--:--:-- --</span></li>
-            <li><a href="{{ url_for('settings.settings_page') }}" class="nav-icon" title="Settings">⚙</a></li>
+            {% if not is_staff %}<li><a href="{{ url_for('settings.settings_page') }}" class="nav-icon" title="Settings">⚙</a></li>{% endif %}
             <li><a href="{{ url_for('auth.logout') }}" class="nav-logout">Logout</a></li>
         </ul>
     </nav>

@@ -388,6 +388,31 @@
         color: var(--text-dim);
         border: 1px solid var(--border-dim);
     }
+
+    /* ── Show tools (pause, run now, show check) ── */
+    #show-tools {
+        background: var(--surface); border: 1px solid var(--border-dim); border-radius: var(--radius);
+        padding: 0.85rem 1.1rem; margin-bottom: 1.25rem; font-size: 0.88rem;
+        backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    }
+    #show-tools summary { cursor: pointer; font-weight: 700; color: var(--text); }
+    #show-tools .tool-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
+    #show-tools button, #show-tools select, #show-tools input {
+        font: inherit; font-size: 0.82rem; padding: 0.4rem 0.7rem; border-radius: 6px;
+        border: 1px solid var(--border-dim); background: rgba(255,255,255,0.05); color: var(--text);
+    }
+    #show-tools button { cursor: pointer; }
+    #show-tools button:hover { border-color: var(--accent); }
+    #show-tools input[type=number] { width: 4.5rem; }
+    #pause-banner { display: none; margin-top: 0.7rem; padding: 0.55rem 0.8rem; border-radius: 6px;
+        background: rgba(230,184,74,0.15); color: #e6b84a; }
+    #pause-banner.on { display: block; }
+    #show-checks { list-style: none; margin: 0.7rem 0 0; padding: 0; }
+    #show-checks li { padding: 0.25rem 0; color: var(--text-dim); }
+    #show-checks .ok::before   { content: "\2713  "; color: var(--accent); font-weight: 700; }
+    #show-checks .warn::before { content: "!  "; color: #e6b84a; font-weight: 700; }
+    #show-checks .fail::before { content: "\2717  "; color: #e5534b; font-weight: 700; }
+    #show-checks b { color: var(--text); }
 </style>
 {% endblock %}
 
@@ -426,6 +451,35 @@
         <button id="btn-preview" class="btn-preview" aria-haspopup="dialog">&#128197; Schedule Preview</button>
     </div>
 </div>
+
+
+<!-- Show tools: pause the schedule, run a playlist for a while, check the show is ready -->
+<details id="show-tools">
+    <summary>Show tools</summary>
+    <div id="pause-banner" role="status"></div>
+    <div class="tool-row">
+        <button id="btn-skip-tonight">Skip tonight&rsquo;s show</button>
+        <span>or pause for</span>
+        <input type="number" id="pause-hours" min="1" max="72" value="4" aria-label="Hours to pause">
+        <span>hours</span>
+        <button id="btn-pause-hours">Pause</button>
+        <button id="btn-resume" style="display:none">Resume schedule</button>
+    </div>
+    <div class="tool-row">
+        <span>Run</span>
+        <select id="run-playlist" aria-label="Playlist to run"></select>
+        <span>for</span>
+        <input type="number" id="run-hours" min="0.5" max="72" step="0.5" value="2" aria-label="Hours to run">
+        <span>hours</span>
+        <button id="btn-run-now">Start now</button>
+        <button id="btn-run-cancel" style="display:none">Stop timed run</button>
+    </div>
+    <div class="tool-row">
+        <button id="btn-showcheck">Check my show</button>
+    </div>
+    <ul id="show-checks" aria-live="polite"></ul>
+    <div id="tools-msg" class="hint" style="margin-top:0.5rem;color:var(--text-dim)"></div>
+</details>
 
 <!-- Schedule preview popup -->
 <div id="preview-overlay" role="dialog" aria-modal="true" aria-labelledby="preview-title">
@@ -1023,6 +1077,71 @@
             setTimeout(() => { status.style.display = 'none'; }, 3000);
         }
     }
+})();
+</script>
+<script>
+(function () {
+    const root = window.APP_ROOT || '';
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    async function call(url, method, body) {
+        const opts = { method: method || 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } };
+        if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+        const r = await fetch(root + url, opts);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        return data;
+    }
+    function say(text) { $('tools-msg').textContent = text || ''; }
+    function show(state) {
+        const banner = $('pause-banner');
+        banner.classList.toggle('on', !!state.paused);
+        banner.textContent = state.paused ? 'The schedule is paused until ' + state.paused_until_text +
+            '. No scheduled show will start until then.' : '';
+        $('btn-resume').style.display = state.paused ? '' : 'none';
+        $('btn-run-cancel').style.display = state.run ? '' : 'none';
+        if (state.run) say('Running ' + state.run.playlist + ' until ' + state.run.until_text + '.');
+    }
+    async function refresh() {
+        try { show(await call('/api/override')); } catch (e) { /* page still usable */ }
+    }
+    async function act(url, body, done) {
+        try { const s = await call(url, 'POST', body || {}); show(s); say(done || ''); }
+        catch (e) { say(e.message); }
+    }
+    $('btn-skip-tonight').addEventListener('click', () => {
+        if (confirm('Skip tonight\u2019s show? The schedule is paused until tomorrow at noon and whatever is playing now stops.'))
+            act('/api/override/pause', { mode: 'tonight', stop_now: true }, 'Tonight\u2019s show is skipped.');
+    });
+    $('btn-pause-hours').addEventListener('click', () => {
+        const h = parseFloat($('pause-hours').value);
+        act('/api/override/pause', { hours: h, stop_now: false }, 'Schedule paused.');
+    });
+    $('btn-resume').addEventListener('click', () => act('/api/override/resume', {}, 'Schedule resumed.'));
+    $('btn-run-now').addEventListener('click', () => {
+        const name = $('run-playlist').value;
+        if (name) act('/api/override/run', { playlist: name, hours: parseFloat($('run-hours').value) }, '');
+    });
+    $('btn-run-cancel').addEventListener('click', () => act('/api/override/run/cancel', {}, 'Timed run stopped.'));
+    $('btn-showcheck').addEventListener('click', async () => {
+        const list = $('show-checks');
+        list.innerHTML = '<li>Checking\u2026</li>';
+        try {
+            const data = await call('/api/showcheck');
+            list.innerHTML = data.checks.map(c =>
+                '<li class="' + esc(c.status) + '"><b>' + esc(c.name) + '</b> \u2014 ' + esc(c.detail) + '</li>').join('');
+        } catch (e) { list.innerHTML = '<li class="fail">' + esc(e.message) + '</li>'; }
+    });
+    (async function loadPlaylistChoices() {
+        try {
+            const data = await call('/api/playlists');
+            $('run-playlist').innerHTML = (data.playlists || [])
+                .filter(p => !p.startsWith('Scene - ') && !p.startsWith('Effect - ') && p !== 'Turn Off Lights')
+                .map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+        } catch (e) { /* leave empty */ }
+    })();
+    $('show-tools').addEventListener('toggle', e => { if (e.target.open) refresh(); });
+    refresh();
 })();
 </script>
 {% endblock %}

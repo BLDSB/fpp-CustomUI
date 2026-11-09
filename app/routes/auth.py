@@ -9,7 +9,7 @@ from dotenv import set_key
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
 
 from app.auth_utils import login_required
-from app import terms
+from app import audit, terms
 from app import ui_path as ui_path_mod
 from app.validation import json_object
 
@@ -218,15 +218,20 @@ def login():
 
         admin_ok = _check_pin(password, stored_hash)
         master_ok = _check_pin(password, master_hash)
+        staff_ok = (not (admin_ok or master_ok)
+                    and _check_pin(password, current_app.config.get("STAFF_PIN_HASH", "")))
 
-        if admin_ok or master_ok:
+        if admin_ok or master_ok or staff_ok:
             _clear_login_failures(client_ip)
             session.clear()
             session["logged_in"] = True
             session["is_master"] = bool(master_ok)
-            return redirect(url_for("main.index"))
+            session["is_staff"] = bool(staff_ok)
+            audit.record("login", "staff" if staff_ok else ("master" if master_ok else "admin"))
+            return redirect(url_for("main.controls") if staff_ok else url_for("main.index"))
 
         _record_login_failure(client_ip)
+        audit.record("login_failed", "")
         current_app.logger.warning("Failed login attempt from %s", client_ip)
         error = "Invalid PIN."
 
@@ -306,6 +311,39 @@ def set_master_pin():
         message, status = failure
         return jsonify({"error": message}), status
 
+    return jsonify({"ok": True})
+
+
+@auth_bp.get("/api/staff-pin")
+@login_required
+def staff_pin_status():
+    return jsonify({"set": bool(current_app.config.get("STAFF_PIN_HASH"))})
+
+
+@auth_bp.post("/api/set-staff-pin")
+@login_required
+def set_staff_pin():
+    """Set the staff PIN. It must differ from the admin and master PINs, or logging in with it
+    would silently give full access instead."""
+    new_pin = str((json_object()).get("new_pin", "")).strip()
+    for key in ("ADMIN_PASSWORD_HASH", "MASTER_PIN_HASH"):
+        if _check_pin(new_pin, current_app.config.get(key, "")):
+            return jsonify({"error": "The staff PIN must be different from the admin PINs."}), 400
+    failure = _persist_pin("STAFF_PIN_HASH", new_pin, label="Staff PIN")
+    if failure is not None:
+        message, status = failure
+        return jsonify({"error": message}), status
+    audit.record("staff_pin_set", "")
+    return jsonify({"ok": True})
+
+
+@auth_bp.post("/api/clear-staff-pin")
+@login_required
+def clear_staff_pin():
+    error = write_env_key("STAFF_PIN_HASH", "")
+    if error:
+        return jsonify({"error": error}), 500
+    audit.record("staff_pin_cleared", "")
     return jsonify({"ok": True})
 
 
