@@ -562,6 +562,15 @@
             ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    // What a zone looks like on screen: the white LED adds light on top of the
+    // color, so a zone that is black plus white shows as white, not black.
+    function withWhite(hex, white) {
+        const w = Number(white) || 0;
+        if (!w) return hex;
+        const channel = i => Math.min(255, parseInt(hex.slice(1 + 2 * i, 3 + 2 * i), 16) + w);
+        return '#' + [0, 1, 2].map(i => channel(i).toString(16).padStart(2, '0')).join('');
+    }
+
     // ── Send color to Lights ────────────────────────────────────
     let _sendTimer = null;
     function sendColor(hex) {
@@ -703,7 +712,7 @@
         wrap.innerHTML = `
             <button class="color-btn" data-hex="${escHtml(btn.hex_value)}" data-white="${white}"
                     ${white ? `title="White ${white}"` : ''} aria-label="Apply ${escHtml(btn.label)}">
-                <span class="dot" style="background:${escHtml(btn.hex_value)}"></span>
+                <span class="dot" style="background:${escHtml(withWhite(btn.hex_value, white))}"></span>
                 ${escHtml(btn.label)}
             </button>
             <button class="btn-del" aria-label="Delete ${escHtml(btn.label)}">&#x2715;</button>
@@ -769,7 +778,7 @@
         row.dataset.id = scene.id;
 
         const swatchHtml = scene.zones.map(z =>
-            `<span class="scene-swatch" style="background:${escHtml(z.hex_color)}" title="${escHtml(z.fpp_model)}${z.white ? ` — white ${Number(z.white)}` : ''}"></span>`
+            `<span class="scene-swatch" style="background:${escHtml(withWhite(z.hex_color, z.white))}" title="${escHtml(z.fpp_model)}${z.white ? ` — white ${Number(z.white)}` : ''}"></span>`
         ).join('');
 
         row.innerHTML = `
