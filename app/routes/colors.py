@@ -7,9 +7,10 @@ from flask import Blueprint, current_app, jsonify, render_template
 from app import db
 from app.auth_utils import login_required
 from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb
+from app import white_layer
 from app.models import (
     OVERLAY_MODELS, ColorButton, SavedColor, all_is_virtual, all_overlay_models,
-    expand_overlay_models,
+    clamp_white, expand_overlay_models,
 )
 from app.routes.settings import selectable_zones
 from app.validation import json_object, page_args, str_field
@@ -37,6 +38,20 @@ def mark_overlays_cleared():
         _all_fan_out_lit = False
 
 
+def _white_field(data):
+    """``(white, error_response)`` from the optional ``white`` field (0-255).
+
+    A missing or null field is fine and means "not given"; anything that is not
+    a whole number in range is rejected rather than quietly clamped.
+    """
+    raw = data.get("white")
+    if raw is None:
+        return None, None
+    if isinstance(raw, bool) or not isinstance(raw, int) or not 0 <= raw <= 255:
+        return None, (jsonify({"error": "White must be a whole number from 0 to 255"}), 400)
+    return clamp_white(raw), None
+
+
 @colors_bp.get("/colors")
 @login_required
 def colors_page():
@@ -54,6 +69,9 @@ def send_color():
         return jsonify({"error": "Invalid hex color"}), 400
     if model not in OVERLAY_MODELS:
         return jsonify({"error": "Invalid overlay model"}), 400
+    white, err = _white_field(data)
+    if err:
+        return err
 
     r, g, b = hex_to_rgb(hex_val)
 
@@ -89,6 +107,8 @@ def send_color():
                 )
             except requests.RequestException:
                 pass
+        # Whatever white those models held goes with them.
+        white_layer.drop(conflicts)
 
     def switch_on(models):
         for target in models:
@@ -108,6 +128,9 @@ def send_color():
         switch_on(targets)
         # FPP sometimes ignores the first switch-on; confirm and repeat if so.
         still_off = ensure_models_active(targets, switch_on)
+        if white is not None:
+            # RGBW zones only; the rest have no white channel and ignore it.
+            white_layer.apply({t: white for t in targets})
     except requests.RequestException as exc:
         current_app.logger.error("FPP send color error: %s", exc)
         return jsonify({"error": "Could not send color to the controller"}), 502
@@ -128,6 +151,7 @@ def stop_color():
 def _deactivate_all_overlays():
     """Deactivate every known overlay model (fire-and-forget per model)."""
     mark_overlays_cleared()
+    white_layer.clear()
     errors = []
     for model in sorted(all_overlay_models()):
         try:
@@ -160,8 +184,11 @@ def save_color():
         return jsonify({"error": "Name is required (max 64 chars)"}), 400
     if not _HEX_RE.match(hex_val):
         return jsonify({"error": "Invalid hex color"}), 400
+    white, err = _white_field(data)
+    if err:
+        return err
 
-    color = SavedColor(name=name, hex_value=hex_val)
+    color = SavedColor(name=name, hex_value=hex_val, white=white)
     db.session.add(color)
     db.session.flush()
 
@@ -169,7 +196,10 @@ def save_color():
     db.session.add(button)
     db.session.commit()
 
-    return jsonify({"id": button.id, "label": button.label, "hex_value": color.hex_value}), 201
+    return jsonify({
+        "id": button.id, "label": button.label,
+        "hex_value": color.hex_value, "white": color.white,
+    }), 201
 
 
 @colors_bp.get("/colors/buttons")
@@ -184,7 +214,7 @@ def list_buttons():
         .all()
     )
     return jsonify([
-        {"id": btn.id, "label": btn.label, "hex_value": color.hex_value}
+        {"id": btn.id, "label": btn.label, "hex_value": color.hex_value, "white": color.white}
         for btn, color in rows
     ])
 

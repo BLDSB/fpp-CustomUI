@@ -49,6 +49,29 @@
         letter-spacing: 0.05em;
     }
 
+    /* White level — only shown while a selected zone has a white channel. */
+    .white-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .white-row[hidden] { display: none; }
+    .white-row label {
+        font-size: 0.78rem;
+        color: var(--text-dim);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    #white-input { flex: 1; min-width: 0; accent-color: var(--accent); }
+    #white-display {
+        font-family: monospace;
+        font-size: 1rem;
+        color: var(--text);
+        min-width: 2.2em;
+        text-align: right;
+    }
+
     /* ── Zone selector ── */
     .zone-section { display: flex; flex-direction: column; gap: 0.4rem; }
     .zone-label-row { display: flex; align-items: center; justify-content: space-between; }
@@ -315,6 +338,12 @@
             <span id="hex-display">#FF0000</span>
         </div>
 
+        <div class="white-row" id="white-row" hidden>
+            <label for="white-input">White</label>
+            <input type="range" id="white-input" min="0" max="255" value="0" aria-label="White level">
+            <span id="white-display">0</span>
+        </div>
+
         <div class="zone-section">
             <div class="zone-label-row">
                 <label>Zones</label>
@@ -326,7 +355,8 @@
             <div class="zone-pills" id="zone-pills">
                 {% for zone in zones %}
                 <button class="zone-pill"
-                        data-model="{{ zone.fpp_model_name }}">
+                        data-model="{{ zone.fpp_model_name }}"
+                        data-white="{{ '1' if zone.has_white else '0' }}">
                     {{ zone.display_name }}
                 </button>
                 {% endfor %}
@@ -369,6 +399,9 @@
     const scenesGrid   = document.getElementById('scenes-grid');
     const zonePills    = document.getElementById('zone-pills');
     const zoneCount    = document.getElementById('zone-count');
+    const whiteRow     = document.getElementById('white-row');
+    const whiteInput   = document.getElementById('white-input');
+    const whiteDisplay = document.getElementById('white-display');
 
     // Multi-zone selection — Set of active model names.
     // The "All" model overlaps every numbered zone and the server switches the
@@ -401,6 +434,33 @@
     zonePills.querySelectorAll('.zone-pill').forEach(p => {
         zoneColors[p.dataset.model] = colorInput.value;
     });
+
+    // Per-zone white level (0-255).  Only zones with a white channel ever send
+    // one; for the rest it is never shown or sent, so RGB-only zones ignore it.
+    const zoneWhites = {};
+    zonePills.querySelectorAll('.zone-pill').forEach(p => { zoneWhites[p.dataset.model] = 0; });
+    const hasWhite = model =>
+        zonePills.querySelector(`.zone-pill[data-model="${model}"]`)?.dataset.white === '1';
+    // undefined (left out of the request) for a zone with no white channel.
+    const whiteFor = model => hasWhite(model) ? zoneWhites[model] : undefined;
+
+    function setWhiteUi(value) {
+        whiteInput.value = value;
+        whiteDisplay.textContent = value;
+    }
+
+    // The slider is offered while any selected zone has a white channel.
+    function syncWhiteRow() {
+        whiteRow.hidden = ![...activeModels].some(hasWhite);
+    }
+
+    // Load a zone's stored color (and white) into the picker.
+    function showZone(model) {
+        const restored = zoneColors[model] || '#ff0000';
+        colorInput.value = restored;
+        hexDisplay.textContent = restored.toUpperCase();
+        setWhiteUi(zoneWhites[model] || 0);
+    }
 
     // ── Output gate ─────────────────────────────────
     // Nothing reaches the lights until the user explicitly enables output, so
@@ -435,6 +495,7 @@
                               : n === total && n > 1       ? 'All zones selected'
                               : n === 1                    ? '1 zone selected'
                                                            : `${n} zones selected`;
+        syncWhiteRow();   // the white slider follows the selection too
     }
     updateZoneCount();
 
@@ -450,9 +511,7 @@
         } else {
             selectPill(pill);
             // Load this zone's stored color into the picker
-            const restored = zoneColors[model] || '#ff0000';
-            colorInput.value = restored;
-            hexDisplay.textContent = restored.toUpperCase();
+            showZone(model);
         }
         updateZoneCount();
     });
@@ -474,9 +533,7 @@
         const first = zoneOnly()[0] || allPill();
         if (first) {
             selectPill(first);
-            const restored = zoneColors[first.dataset.model] || '#ff0000';
-            colorInput.value = restored;
-            hexDisplay.textContent = restored.toUpperCase();
+            showZone(first.dataset.model);
         }
         updateZoneCount();
     });
@@ -516,7 +573,7 @@
             try {
                 await Promise.all(
                     [...activeModels].map(model =>
-                        apiFetch('/colors/send', 'POST', { hex, model })
+                        apiFetch('/colors/send', 'POST', { hex, model, white: whiteFor(model) })
                     )
                 );
             } catch (err) {
@@ -532,7 +589,9 @@
         const models = [...touchedModels];
         if (!models.length) return;
         await Promise.all(models.map(model =>
-            apiFetch('/colors/send', 'POST', { hex: zoneColors[model], model })
+            apiFetch('/colors/send', 'POST', {
+                hex: zoneColors[model], model, white: whiteFor(model),
+            })
         ));
     }
 
@@ -546,6 +605,20 @@
     colorInput.addEventListener('input', onColorChange);
     colorInput.addEventListener('change', onColorChange);
 
+    // ── White slider — same auto-send as the color picker ──────
+    function onWhiteChange() {
+        const white = Number(whiteInput.value);
+        whiteDisplay.textContent = white;
+        activeModels.forEach(model => {
+            if (!hasWhite(model)) return;   // RGB-only zones ignore white
+            zoneWhites[model] = white;
+            markTouched(model);
+        });
+        sendColor(colorInput.value);
+    }
+    whiteInput.addEventListener('input', onWhiteChange);
+    whiteInput.addEventListener('change', onWhiteChange);
+
     // ── Clear all zones to black ───────────────────────────────
     btnClear.addEventListener('click', async () => {
         btnClear.disabled = true;
@@ -556,10 +629,12 @@
             // Reset every zone to black in the JS state
             zonePills.querySelectorAll('.zone-pill').forEach(p => {
                 zoneColors[p.dataset.model] = '#000000';
+                zoneWhites[p.dataset.model] = 0;
             });
             touchedModels.clear();
             colorInput.value = '#000000';
             hexDisplay.textContent = '#000000';
+            setWhiteUi(0);
             showToast('All zones cleared', 'success');
         } catch (err) {
             showToast(err.message, 'error');
@@ -605,6 +680,8 @@
             const btn = await apiFetch('/colors/save', 'POST', {
                 name: name.trim(),
                 hex: colorInput.value,
+                // Saved with the color only when the slider is on offer.
+                white: whiteRow.hidden ? undefined : Number(whiteInput.value),
             });
             appendButton(btn);
             showToast(`Saved: ${btn.label}`, 'success');
@@ -621,8 +698,11 @@
         const wrap = document.createElement('div');
         wrap.className = 'color-btn-wrap';
         wrap.dataset.id = btn.id;
+        // A color saved before white existed (null) applies with white off.
+        const white = Number(btn.white) || 0;
         wrap.innerHTML = `
-            <button class="color-btn" data-hex="${escHtml(btn.hex_value)}" aria-label="Apply ${escHtml(btn.label)}">
+            <button class="color-btn" data-hex="${escHtml(btn.hex_value)}" data-white="${white}"
+                    ${white ? `title="White ${white}"` : ''} aria-label="Apply ${escHtml(btn.label)}">
                 <span class="dot" style="background:${escHtml(btn.hex_value)}"></span>
                 ${escHtml(btn.label)}
             </button>
@@ -650,9 +730,15 @@
         const applyBtn = e.target.closest('.color-btn');
         if (applyBtn) {
             const hex = applyBtn.dataset.hex;
+            const white = Number(applyBtn.dataset.white) || 0;
             colorInput.value = hex;
             hexDisplay.textContent = hex.toUpperCase();
-            activeModels.forEach(model => { zoneColors[model] = hex; markTouched(model); });
+            setWhiteUi(white);
+            activeModels.forEach(model => {
+                zoneColors[model] = hex;
+                if (hasWhite(model)) zoneWhites[model] = white;
+                markTouched(model);
+            });
             sendColor(hex);
             return;
         }
@@ -683,7 +769,7 @@
         row.dataset.id = scene.id;
 
         const swatchHtml = scene.zones.map(z =>
-            `<span class="scene-swatch" style="background:${escHtml(z.hex_color)}" title="${escHtml(z.fpp_model)}"></span>`
+            `<span class="scene-swatch" style="background:${escHtml(z.hex_color)}" title="${escHtml(z.fpp_model)}${z.white ? ` — white ${Number(z.white)}` : ''}"></span>`
         ).join('');
 
         row.innerHTML = `
@@ -718,16 +804,22 @@
         // either the whole display or the numbered zones, never both — they
         // overlap, and applying both would leave whichever landed last on top.
         const zones = {};
-        activeModels.forEach(model => { zoneColors[model] = colorInput.value; });
+        const whites = {};   // only zones that have a white channel
+        activeModels.forEach(model => {
+            zoneColors[model] = colorInput.value;
+            if (hasWhite(model)) zoneWhites[model] = Number(whiteInput.value);
+        });
         const scenePills = activeModels.has(ALL_MODEL) ? [allPill()] : zoneOnly();
         scenePills.forEach(p => {
-            zones[p.dataset.model] = zoneColors[p.dataset.model];
+            const model = p.dataset.model;
+            zones[model] = zoneColors[model];
+            if (hasWhite(model)) whites[model] = zoneWhites[model];
         });
 
 
         btnSceneSave.disabled = true;
         try {
-            const scene = await apiFetch('/api/scenes', 'POST', { name: name.trim(), zones });
+            const scene = await apiFetch('/api/scenes', 'POST', { name: name.trim(), zones, whites });
             const empty = scenesGrid.querySelector('.empty-state');
             if (empty) empty.remove();
             scenesGrid.appendChild(renderScene(scene));
@@ -756,15 +848,13 @@
                 // Restore zone picker colors to match the applied scene
                 result.zones.forEach(z => {
                     zoneColors[z.fpp_model] = z.hex_color;
+                    // A scene saved before white existed (null) applies with white off.
+                    if (hasWhite(z.fpp_model)) zoneWhites[z.fpp_model] = z.white || 0;
                     markTouched(z.fpp_model);
                 });
                 const activePill = zonePills.querySelector('.zone-pill.active');
-                if (activePill) {
-                    const restored = zoneColors[activePill.dataset.model];
-                    if (restored) {
-                        colorInput.value = restored;
-                        hexDisplay.textContent = restored.toUpperCase();
-                    }
+                if (activePill && zoneColors[activePill.dataset.model]) {
+                    showZone(activePill.dataset.model);
                 }
                 showToast(`Scene applied`, 'success');
             } catch (err) {

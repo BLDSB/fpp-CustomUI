@@ -5,10 +5,12 @@ from flask import Blueprint, current_app, jsonify, request
 
 from app import db
 from app.auth_utils import internal_token_error, login_required
+from app import white_layer
 from app.fpp_api import ensure_models_active, fpp_url, hex_to_rgb, playlist_url
 from app.fpp_playlist import build_playlist_def, scene_entries
 from app.models import (
-    OVERLAY_MODELS, Scene, SceneZone, all_overlay_models, expand_overlay_models,
+    OVERLAY_MODELS, Scene, SceneZone, all_overlay_models, clamp_white,
+    expand_overlay_models,
 )
 from app.validation import json_object, page_args, str_field
 
@@ -72,6 +74,7 @@ def _reset_overlays():
 
     from app.routes.colors import mark_overlays_cleared
     mark_overlays_cleared()
+    white_layer.clear()
     for model in sorted(all_overlay_models()):
         try:
             requests.put(fpp_url(f"/overlays/model/{model}/state"), json={"State": 0}, timeout=3)
@@ -93,6 +96,7 @@ def _set_scene_colors(scene):
     """Enable overlay models and fill colors for each zone. Does not stop playback."""
     errors = []
     colors = {}   # overlay model -> rgb, for the read-back below
+    whites = {}   # overlay model -> white level, for zones saved with one
     for zone in scene.zones:
         try:
             rgb = hex_to_rgb(zone.hex_color)
@@ -106,9 +110,16 @@ def _set_scene_colors(scene):
             errors.append(zone.fpp_model)
             continue
         try:
-            for target in expand_overlay_models([zone.fpp_model]):
+            targets = expand_overlay_models([zone.fpp_model])
+            for target in targets:
                 _put_zone_on(target, rgb)
                 colors[target] = rgb
+            if zone.white is None:
+                # Saved before white existed: show just its color, without
+                # white left over from whatever lit this zone before.
+                white_layer.drop(targets)
+            else:
+                whites.update({t: zone.white for t in targets})
         except requests.RequestException as exc:
             current_app.logger.error("Scene %d apply error for %s: %s", scene.id, zone.fpp_model, exc)
             errors.append(zone.fpp_model)
@@ -121,6 +132,11 @@ def _set_scene_colors(scene):
                 current_app.logger.error("Scene %d re-apply error for %s: %s", scene.id, target, exc)
 
     errors += ensure_models_active(list(colors), reactivate)
+    try:
+        white_layer.apply(whites)       # RGBW zones only; others ignore white
+    except requests.RequestException as exc:
+        current_app.logger.error("Scene %d white apply error: %s", scene.id, exc)
+        errors += sorted(whites)
     return len(errors) == 0, errors
 
 
@@ -150,6 +166,11 @@ def create_scene():
     data = json_object()
     name = str_field(data, "name")
     zones = data.get("zones", {})
+    # Optional white level per zone, keyed like ``zones``; zones without an
+    # entry are saved without white and leave the white channel alone.
+    whites = data.get("whites")
+    if not isinstance(whites, dict):
+        whites = {}
 
     if not name or len(name) > 64:
         return jsonify({"error": "Name required (max 64 chars)"}), 400
@@ -172,7 +193,10 @@ def create_scene():
             continue
         if not _HEX_RE.match(str(hex_color)):
             continue
-        db.session.add(SceneZone(scene_id=scene.id, fpp_model=fpp_model, hex_color=hex_color))
+        db.session.add(SceneZone(
+            scene_id=scene.id, fpp_model=fpp_model, hex_color=hex_color,
+            white=clamp_white(whites.get(fpp_model)),
+        ))
         valid_zones += 1
 
     if valid_zones == 0:
