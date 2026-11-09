@@ -8,7 +8,6 @@ that RGB-only zones simply ignore white.
 """
 import io
 import json
-import threading
 
 import pytest
 
@@ -23,13 +22,7 @@ Z32 = {70, 74, 78, 82, 86, 90}
 
 @pytest.fixture
 def client(app_factory, fpp):
-    app = app_factory()
-    # The startup sync thread rewrites playlists through the same in-memory
-    # connection.  Seeding rows below while it runs can lose part of a commit,
-    # so let it finish first.
-    for thread in threading.enumerate():
-        if thread.name == "fpp-startup-sync":
-            thread.join(timeout=10)
+    app = app_factory(settle=True)
     client = app.test_client()
     with client.session_transaction() as s:
         s["logged_in"] = True
