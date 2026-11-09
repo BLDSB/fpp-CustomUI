@@ -51,6 +51,7 @@ class FakeFPP:
         self.playlists = {}        # name -> definition
         self.schedule = []
         self.overlay_state = {}    # model -> {"State": n, "RGB": [...]}
+        self.ranges = {}           # channel -> value forced by the range overlay
         self.status = {"status_name": "idle", "current_playlist": {"playlist": ""}}
         self.fppd_schedule = {"enabled": 1, "entries": [], "items": [], "scheduleDistance": 28}
         self.models = ["All"] + ["Zone %d" % i for i in range(1, 16)]
@@ -98,6 +99,17 @@ class FakeFPP:
             else:
                 self.overlay_state.setdefault(model, {}).update(json or {})
             return _Response({"status": "OK"})
+        m = re.fullmatch(r"/overlays/range(?:/([^/]+)/(\d+))?", path)
+        if m and method == "PUT":
+            if m.group(1) is None:
+                if (json or {}).get("deleteAll"):
+                    self.ranges.clear()
+            else:
+                for part in m.group(1).split(","):
+                    first, _, last = part.partition("-")
+                    for channel in range(int(first), int(last or first) + 1):
+                        self.ranges[channel] = int(m.group(2))
+            return _Response({"Status": "OK", "Message": ""})
         if path == "/overlays/models" and method == "GET":
             if self.models_unreadable:
                 return _Response({}, 500)
@@ -136,6 +148,15 @@ def instant_activation_checks(monkeypatch):
     """The read-back after switching models on waits for fppd; tests do not."""
     from app import fpp_api
     monkeypatch.setattr(fpp_api, "_ACTIVATION_SETTLE", 0)
+
+
+@pytest.fixture(autouse=True)
+def forget_white_layer():
+    """The white layer remembers lit models in memory; every test starts clean."""
+    from app import white_layer
+    white_layer._levels.clear()
+    yield
+    white_layer._levels.clear()
 
 
 @pytest.fixture

@@ -15,7 +15,8 @@ from app.auth_utils import login_required
 from app.models import (
     MAX_ZONES, OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
     EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, ZoneMember,
-    all_is_virtual, get_all_zones, is_managed_overlay, ref_name_lookups,
+    all_is_virtual, clamp_white, get_all_zones, has_white_channel, is_managed_overlay,
+    ref_name_lookups,
 )
 from app import overlay_layout
 from app import remote_access
@@ -270,8 +271,10 @@ def selectable_zones(include_hidden=False):
     site sees it up top.
     """
     has_all = "All" in _current_overlay_models() or all_is_virtual()
+    # has_white tells the Colors page whether to offer a White slider for the zone.
     return [
-        z.to_dict() for z in get_all_zones()
+        {**z.to_dict(), "has_white": has_white_channel(z.fpp_model_name)}
+        for z in get_all_zones()
         if (include_hidden or not z.hidden) and (z.slot != 0 or has_all)
     ]
 
@@ -800,7 +803,7 @@ def build_ui_payload():
             for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all()
         ],
         "saved_colors": [
-            {"id": c.id, "name": c.name, "hex_value": c.hex_value}
+            {"id": c.id, "name": c.name, "hex_value": c.hex_value, "white": c.white}
             for c in SavedColor.query.all()
         ],
         "color_buttons": [
@@ -942,7 +945,10 @@ def _restore_colors(data):
         if not _COLOR_RE.match(hex_value):
             current_app.logger.warning("Restore: skipping color with invalid hex %r", hex_value)
             continue
-        nc = SavedColor(name=str(c.get("name", ""))[:64], hex_value=hex_value)
+        nc = SavedColor(
+            name=str(c.get("name", ""))[:64], hex_value=hex_value,
+            white=clamp_white(c.get("white")),
+        )
         db.session.add(nc)
         db.session.flush()
         color_id_map[c.get("id")] = nc.id
@@ -990,6 +996,7 @@ def _restore_scenes(data):
                 scene_id=new_scene.id,
                 fpp_model=fpp_model,
                 hex_color=hex_color,
+                white=clamp_white(z.get("white")),
             ))
         db.session.flush()
         try:

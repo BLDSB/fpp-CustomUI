@@ -5,7 +5,7 @@ from urllib.parse import quote
 import requests
 from flask import Blueprint, current_app, jsonify, render_template, request
 
-from app import db
+from app import db, white_layer
 from app.auth_utils import internal_token_error, login_required
 from app.fpp_api import ensure_models_active, fpp_error_text, fpp_url, playlist_url
 from app.fpp_playlist import build_playlist_def, effect_entries
@@ -133,6 +133,12 @@ def _post_effect(targets, effect, args):
 def _send_effect(models, effect, args):
     """Push an 'Overlay Model Effect' command to FPP. Returns (ok, error)."""
     targets = expand_overlay_models(models)
+    # An effect only draws RGB; white set by a color or scene must not glow on.
+    # A real "All" model covers every zone, so it takes all white with it.
+    if "All" in targets:
+        white_layer.clear()
+    else:
+        white_layer.drop(targets)
     try:
         _post_effect(targets, effect, args)
 

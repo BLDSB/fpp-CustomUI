@@ -89,6 +89,9 @@ def _add_missing_columns(app):
     wanted = [
         # (table, column, DDL type + default)
         ("custom_playlists", "random", "BOOLEAN NOT NULL DEFAULT 0"),
+        # White level for RGBW zones; NULL = saved before white existed.
+        ("saved_colors", "white", "INTEGER"),
+        ("scene_zones", "white", "INTEGER"),
     ]
     from sqlalchemy import text
     for table, column, ddl in wanted:

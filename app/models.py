@@ -21,6 +21,19 @@ OVERLAY_MODELS = {"All"} | {f"Zone {i}" for i in range(1, MAX_ZONES + 1)}
 # "Zone 3.2": the second xLights model grouped into Zone 3 (see ZoneMember).
 _MEMBER_NAME_RE = re.compile(r"^Zone (\d+)\.(\d+)$")
 
+# Channels per node that mean "RGB plus a white channel" (RGBW).
+WHITE_CHANNELS_PER_NODE = 4
+
+
+def clamp_white(value):
+    """A white level as an int 0-255, or None for "not given" / not a number."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(0, min(255, int(value)))
+    except (TypeError, ValueError):
+        return None
+
 
 class SavedColor(db.Model):
     __tablename__ = "saved_colors"
@@ -28,9 +41,12 @@ class SavedColor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), nullable=False)
     hex_value = db.Column(db.String(7), nullable=False)  # e.g. "#FF5733"
+    # 0-255 white level, or NULL for a color saved before white existed.
+    # Added by _add_missing_columns (create_all never adds columns).
+    white = db.Column(db.Integer, nullable=True)
 
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "hex_value": self.hex_value}
+        return {"id": self.id, "name": self.name, "hex_value": self.hex_value, "white": self.white}
 
 
 class ColorButton(db.Model):
@@ -219,9 +235,12 @@ class SceneZone(db.Model):
     scene_id = db.Column(db.Integer, db.ForeignKey("scenes.id"), nullable=False, index=True)
     fpp_model = db.Column(db.String(32), nullable=False)
     hex_color = db.Column(db.String(7), nullable=False)
+    # 0-255 white level, or NULL for a zone saved before white existed (those
+    # leave the white channel alone, exactly as they always did).
+    white = db.Column(db.Integer, nullable=True)
 
     def to_dict(self):
-        return {"fpp_model": self.fpp_model, "hex_color": self.hex_color}
+        return {"fpp_model": self.fpp_model, "hex_color": self.hex_color, "white": self.white}
 
 
 
@@ -368,6 +387,51 @@ def is_managed_overlay(name):
         return True
     m = _MEMBER_NAME_RE.match(name or "")
     return bool(m) and 1 <= int(m.group(1)) <= MAX_ZONES
+
+
+def _rgbw_rows():
+    """Every stored layout row (zone or group member) with a white channel."""
+    return [
+        *ZoneLayout.query.filter_by(channels_per_node=WHITE_CHANNELS_PER_NODE),
+        *ZoneMember.query.filter_by(channels_per_node=WHITE_CHANNELS_PER_NODE),
+    ]
+
+
+def rgbw_models():
+    """Overlay models whose nodes have a white channel (4 channels per node).
+
+    Only imported layouts say how many channels a node has, so a zone that was
+    never imported has no white channel as far as the app can tell.
+    """
+    return {row.fpp_model_name for row in _rgbw_rows()}
+
+
+def white_channels(models):
+    """``{overlay model: [FPP channel numbers]}`` of the white channel of each RGBW model.
+
+    Channels are 1-based, as FPP's channel-range overlay takes them.  Node ``n``
+    of a model starting at channel ``s`` occupies ``s + 4(n-1)`` to ``s + 4n - 1``
+    and its white is the last of those.  Models without a white channel are left
+    out, so an RGB-only zone simply has nothing to drive.
+    """
+    wanted = set(models)
+    out = {}
+    for row in _rgbw_rows():
+        if row.fpp_model_name not in wanted:
+            continue
+        nodes = sorted({int(cell) for line in row.data.split(";")
+                        for cell in line.split(",") if cell})
+        out[row.fpp_model_name] = [
+            row.start_channel + (n - 1) * WHITE_CHANNELS_PER_NODE + WHITE_CHANNELS_PER_NODE - 1
+            for n in nodes
+        ]
+    return out
+
+
+def has_white_channel(model_name):
+    """True when sending a color to ``model_name`` can drive a white channel."""
+    has_white = rgbw_models()
+    return any(t in has_white for t in expand_overlay_models([model_name]))
 
 
 def all_is_virtual():
