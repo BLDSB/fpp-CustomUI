@@ -159,3 +159,87 @@ def test_rename_rejects_duplicates_and_bad_names(client, fpp):
     assert client.put("/api/scenes/999", json={"name": "Z"}).status_code == 404
     # Re-saving its own name is not a clash.
     assert client.put(f"/api/scenes/{a['id']}", json={"name": "A"}).status_code == 200
+
+
+# ── White level on saved colors and linked scene zones ───────────────────────
+
+def save_color_with_white(client, name="Warm", hex_val="#ff8800", white=120):
+    resp = client.post("/colors/save", json={"name": name, "hex": hex_val, "white": white})
+    assert resp.status_code == 201
+    return resp.get_json()
+
+
+def scene_whites(client):
+    return {s["name"]: [z["white"] for z in s["zones"]] for s in client.get("/api/scenes").get_json()}
+
+
+def test_editing_a_shade_keeps_the_white_the_color_was_saved_with(client, fpp):
+    color = save_color_with_white(client)
+    make_linked_scene_with_white(client, color, 120)
+
+    resp = client.put(f"/colors/buttons/{color['id']}", json={"hex": "#cc0033"})
+    assert resp.status_code == 200 and resp.get_json()["white"] == 120
+    assert client.get("/colors/buttons").get_json()[0]["white"] == 120
+    assert scene_whites(client) == {"Warm": [120, 120]}
+
+
+def make_linked_scene_with_white(client, color, white, zones=("Zone 1", "Zone 2")):
+    resp = client.post("/api/scenes", json={
+        "name": "Warm",
+        "zones": {z: color["hex_value"] for z in zones},
+        "whites": {z: white for z in zones},
+        "saved_colors": {z: color["saved_color_id"] for z in zones},
+    })
+    assert resp.status_code == 201, resp.get_json()
+    return resp.get_json()
+
+
+def test_editing_the_white_updates_linked_scenes(client, fpp):
+    color = save_color_with_white(client)
+    make_linked_scene_with_white(client, color, 120)
+
+    resp = client.put(f"/colors/buttons/{color['id']}", json={"hex": "#ff8800", "white": 30})
+    assert resp.status_code == 200 and resp.get_json()["white"] == 30
+    assert scene_whites(client) == {"Warm": [30, 30]}
+
+
+def test_a_bad_white_in_an_edit_is_rejected(client, fpp):
+    color = save_color_with_white(client)
+    resp = client.put(f"/colors/buttons/{color['id']}", json={"hex": "#ff8800", "white": 999})
+    assert resp.status_code == 400
+    assert client.get("/colors/buttons").get_json()[0]["white"] == 120
+
+
+def test_a_zone_with_a_different_white_is_not_linked(client, fpp):
+    """Same shade, but the white was moved: it is no longer that saved color, so
+    a later edit of the color must not rewrite it."""
+    color = save_color_with_white(client)
+    scene = make_linked_scene_with_white(client, color, 200)
+    assert [z["saved_color_id"] for z in scene["zones"]] == [None, None]
+
+    client.put(f"/colors/buttons/{color['id']}", json={"hex": "#00ff00", "white": 5})
+    assert scene_whites(client) == {"Warm": [200, 200]}
+    assert scene_hexes(client) == {"Warm": ["#ff8800", "#ff8800"]}
+
+
+def test_a_color_saved_without_white_links_a_zone_with_white_off(client, fpp):
+    color = save_color(client)                      # white is NULL
+    resp = client.post("/api/scenes", json={
+        "name": "Plain", "zones": {"Zone 1": color["hex_value"]},
+        "whites": {"Zone 1": 0}, "saved_colors": {"Zone 1": color["saved_color_id"]},
+    })
+    assert resp.status_code == 201
+    assert resp.get_json()["zones"][0]["saved_color_id"] == color["saved_color_id"]
+
+
+def test_backup_and_restore_keep_the_white_on_linked_zones(client, fpp):
+    color = save_color_with_white(client)
+    make_linked_scene_with_white(client, color, 120)
+    backup = client.get("/api/backup")
+
+    client.delete("/api/scenes/" + str(client.get("/api/scenes").get_json()[0]["id"]))
+    restored = client.post("/api/restore", data={"file": (io.BytesIO(backup.data), "b.json")},
+                           content_type="multipart/form-data")
+    assert restored.status_code == 200, restored.get_json()
+    zone = client.get("/api/scenes").get_json()[0]["zones"][0]
+    assert zone["white"] == 120 and zone["saved_color_id"] is not None
