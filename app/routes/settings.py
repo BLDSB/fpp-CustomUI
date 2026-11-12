@@ -1273,6 +1273,25 @@ def set_remote_options():
     return jsonify({"ok": True})
 
 
+@settings_bp.get("/api/data-usage")
+@login_required
+def data_usage_summary():
+    from app import data_usage
+    app = current_app._get_current_object()
+    data_usage.sample(app)              # include the last few minutes
+    return jsonify(data_usage.summary(app))
+
+
+@settings_bp.post("/api/data-usage/reset")
+@login_required
+@rate_limited(5, 600)
+def data_usage_reset():
+    from app import audit, data_usage
+    data_usage.clear(current_app._get_current_object())
+    audit.record("data_usage_reset", "")
+    return jsonify({"ok": True})
+
+
 @settings_bp.get("/api/audit")
 @login_required
 def activity_log():

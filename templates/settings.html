@@ -420,6 +420,37 @@
         </div>
     </div>
 
+    <!-- Data usage -->
+    <div class="settings-card" id="usage-card">
+        <h2>Data Usage</h2>
+        <div class="hint" id="usage-state">Checking&hellip;</div>
+        <table id="usage-table" style="display:none; margin-top:10px; border-collapse:collapse; width:100%">
+            <thead>
+                <tr style="text-align:left">
+                    <th style="padding:4px 8px 4px 0"></th>
+                    <th style="padding:4px 8px">Total</th>
+                    <th style="padding:4px 8px">Down</th>
+                    <th style="padding:4px 8px">Up</th>
+                    <th style="padding:4px 0 4px 8px">Via BLD tunnel</th>
+                </tr>
+            </thead>
+            <tbody id="usage-rows"></tbody>
+        </table>
+        <div id="usage-bars" style="display:none; margin-top:14px">
+            <label>Last 14 days</label>
+            <div id="usage-chart" style="display:flex; align-items:flex-end; gap:3px; height:56px; margin-top:6px"></div>
+        </div>
+        <span class="hint" id="usage-note" style="display:none">
+            Counts this controller's own traffic on <span id="usage-iface"></span> since data
+            usage was first recorded, so it includes everything the controller does, not just the
+            portal. Other devices on the same hotspot are not included and your carrier's own figure
+            is the one that counts.
+        </span>
+        <div style="margin-top:10px">
+            <button id="btn-usage-reset" class="btn-save" style="display:none">Reset totals</button>
+        </div>
+    </div>
+
     <!-- Colors -->
     <div class="settings-card">
         <h2>Colors</h2>
@@ -2336,6 +2367,88 @@
                 leaveBtn.disabled = false;
                 refresh();
             }
+        });
+
+        refresh();
+    })();
+
+    // ── Data usage ────────────────────────────────────────────────────────────
+    (function () {
+        const stateEl = document.getElementById('usage-state');
+        if (!stateEl) return;
+        const root = window.APP_ROOT || '';
+        const table = document.getElementById('usage-table');
+        const rows  = document.getElementById('usage-rows');
+        const bars  = document.getElementById('usage-bars');
+        const chart = document.getElementById('usage-chart');
+        const note  = document.getElementById('usage-note');
+        const resetBtn = document.getElementById('btn-usage-reset');
+
+        function fmt(n) {
+            if (n < 1024) return n + ' B';
+            const units = ['KB', 'MB', 'GB', 'TB'];
+            let v = n / 1024, i = 0;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2) + ' ' + units[i];
+        }
+        function cell(text, pad) {
+            const td = document.createElement('td');
+            td.style.padding = pad;
+            td.textContent = text;
+            return td;
+        }
+
+        function show(d) {
+            if (!d.available) {
+                stateEl.textContent = 'No internet connection was found to measure yet.';
+                return;
+            }
+            stateEl.textContent = 'How much data this controller has used.';
+            document.getElementById('usage-iface').textContent = d.interface;
+            rows.textContent = '';
+            [['Today', d.today], ['Last 7 days', d.week], ['Last 30 days', d.thirty],
+             ['This month', d.month]].forEach(([label, p]) => {
+                const tr = document.createElement('tr');
+                tr.appendChild(cell(label, '4px 8px 4px 0'));
+                tr.appendChild(cell(fmt(p.link.total), '4px 8px'));
+                tr.appendChild(cell(fmt(p.link.rx), '4px 8px'));
+                tr.appendChild(cell(fmt(p.link.tx), '4px 8px'));
+                tr.appendChild(cell(fmt(p.tunnel.total), '4px 0 4px 8px'));
+                rows.appendChild(tr);
+            });
+            const max = Math.max(1, ...d.daily.map(x => x.total));
+            chart.textContent = '';
+            d.daily.forEach(x => {
+                const bar = document.createElement('div');
+                bar.style.cssText = 'flex:1; background:var(--accent); border-radius:2px 2px 0 0; min-height:2px';
+                bar.style.height = Math.max(2, Math.round(x.total * 56 / max)) + 'px';
+                bar.title = x.day + ': ' + fmt(x.total);
+                chart.appendChild(bar);
+            });
+            table.style.display = bars.style.display = note.style.display = '';
+            resetBtn.style.display = '';
+        }
+
+        async function refresh() {
+            try {
+                const res = await fetch(root + '/api/data-usage');
+                if (!res.ok) throw new Error();
+                show(await res.json());
+            } catch (err) {
+                stateEl.textContent = 'Could not read data usage.';
+            }
+        }
+
+        resetBtn.addEventListener('click', async () => {
+            if (!confirm('Reset the data usage totals to zero?\n\nDo this when your hotspot plan renews.')) return;
+            try {
+                const res = await fetch(root + '/api/data-usage/reset', { method: 'POST' });
+                if (!res.ok) throw new Error();
+                showToast('Data usage totals reset.', 'success');
+            } catch (err) {
+                showToast('Could not reset the totals.', 'error');
+            }
+            refresh();
         });
 
         refresh();
