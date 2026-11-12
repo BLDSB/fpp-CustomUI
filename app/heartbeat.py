@@ -169,6 +169,8 @@ def _loop(app):
     time.sleep(75)                          # after the alert monitor, once everything is up
     while True:
         try:
+            from app import data_usage
+            data_usage.sample(app)          # counts the link whether or not remote access is on
             if enrolled():
                 send(app)
                 from app import remote_backup
