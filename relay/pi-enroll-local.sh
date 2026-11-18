@@ -8,6 +8,7 @@ cat > /etc/wireguard/bld.conf <<CONF
 [Interface]
 PrivateKey = $(cat /etc/wireguard/bld.key)
 Address = $IP/32
+MTU = 1280
 
 [Peer]
 PublicKey = $HUB_PUB

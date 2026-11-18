@@ -137,6 +137,7 @@ for key, pattern in rules.items():
 [Interface]
 PrivateKey = $(cat "$WG_KEY")
 Address = ${R_TUNNEL_IP}/32
+MTU = 1280
 
 [Peer]
 PublicKey = ${R_HUB_PUBLIC_KEY}
