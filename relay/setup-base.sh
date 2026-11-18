@@ -57,6 +57,7 @@ if [ ! -f /etc/wireguard/${WG_IF}.conf ]; then
 [Interface]
 Address = ${WG_NET}
 ListenPort = ${WG_PORT}
+MTU = 1280
 PrivateKey = $(cat /etc/wireguard/server.key)
 # Peers are added by the enrol tool, one [Peer] per Pi.
 CONF
