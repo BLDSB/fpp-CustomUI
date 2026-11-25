@@ -359,8 +359,10 @@ def _derive_from_map():
     if composite:
         entries.append((0, COMPOSITE_KEY, composite))
 
-    labels, group_of = overlay_layout.suggest_groups(
-        [m["name"] for m, _grid in grids], MAX_ZONES
+    ordered = [m for m, _grid in grids]
+    labels, group_of = (
+        overlay_layout.mapped_groups(ordered, MAX_ZONES)
+        or overlay_layout.suggest_groups([m["name"] for m in ordered], MAX_ZONES)
     )
     for (model, grid), group in zip(grids, group_of):
         entries.append((group + 1, model["name"], dict(grid, group_label=labels[group])))

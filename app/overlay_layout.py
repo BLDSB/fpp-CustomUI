@@ -17,7 +17,8 @@ xLights' FPP Connect uploads.  Each node is one line of
 ``x,y,z,startChannel,channelCount,colorOrder,pixelSize`` under a
 ``# Model: 'Name', N nodes`` header.  A hand- or script-built map for DMX
 fixtures may add ``# Dimmers: 1,7,13`` (1-based channels) under a header to name
-the master dimmer channels that must be raised for that model to light.  Because a node's index is derived from its
+the master dimmer channels that must be raised for that model to light, and
+``# Zone: 3`` to choose its zone instead of the suggested grouping.  Because a node's index is derived from its
 channel and its position from its coordinates, upstream xLights complexity
 (wiring order, start corner, strand count, string order) is already baked in and
 cannot affect the result.
@@ -50,8 +51,11 @@ def parse_display_map(text):
                 end = line.rfind("'")
                 name = line[start + 1:end] if 0 <= start < end else line[8:].strip()
                 current = {"name": name, "channels_per_node": 3, "nodes": [],
-                           "dimmers": []}
+                           "dimmers": [], "zone": None}
                 models.append(current)
+            elif line.startswith("# Zone:") and current is not None:
+                value = line[len("# Zone:"):].strip()
+                current["zone"] = int(value) if value.isdecimal() else None
             elif line.startswith("# Dimmers:") and current is not None:
                 current["dimmers"] += [
                     int(v) for v in line[len("# Dimmers:"):].split(",")
@@ -342,6 +346,23 @@ def _group_key(name):
     """A model name with its trailing number stripped: "Inside 12" -> "inside"."""
     base = re.sub(r"[\s_\-]*\d+$", "", name or "").strip().lower()
     return base or (name or "").lower()
+
+
+def mapped_groups(models, max_groups):
+    """The zones the map itself asks for, or None to fall back to suggesting.
+
+    Same shape as :func:`suggest_groups`, except that the group indexes are the
+    chosen zones less one, so ``labels`` is a dict.  Used only when every model
+    names a zone in range; a half-specified map would collide with suggestions.
+    """
+    zones = [m.get("zone") for m in models]
+    if not all(z is not None and 1 <= z <= max_groups for z in zones):
+        return None
+    labels = {}
+    for model, zone in zip(models, zones):
+        name = model["name"]
+        labels.setdefault(zone - 1, re.sub(r"[\s_\-]*\d+$", "", name).strip() or name)
+    return labels, [zone - 1 for zone in zones]
 
 
 def suggest_groups(names, max_groups):

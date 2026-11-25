@@ -132,3 +132,19 @@ def test_dimmers_survive_a_backup_and_restore(imported):
         assert FixtureDimmer.query.count() == 0
         assert settings.apply_ui_backup(json.loads(json.dumps(backup))) is None
         assert FixtureDimmer.query.count() == 4
+
+
+def test_a_map_can_choose_each_models_zone(client, monkeypatch, tmp_path):
+    path = tmp_path / "zoned"
+    path.write_text(MAP.replace("'Pars', 2 nodes\n", "'Pars', 2 nodes\n# Zone: 2\n")
+                    .replace("1 nodes\n", "1 nodes\n# Zone: 1\n"))
+    monkeypatch.setattr(settings, "DISPLAY_MAP_PATH", str(path))
+    found = client.get("/api/fpp/layout/preview").get_json()["models"]
+    assert [(m["source_name"], m["slot"], m["group_label"]) for m in found] == [
+        ("Pars", 2, "Pars"), ("Wash 1", 1, "Wash"), ("Wash 2", 1, "Wash"),
+    ]
+
+
+def test_a_partly_zoned_map_falls_back_to_suggestions():
+    models = ol.parse_display_map(MAP.replace("2 nodes\n", "2 nodes\n# Zone: 2\n"))
+    assert ol.mapped_groups(models, 15) is None
