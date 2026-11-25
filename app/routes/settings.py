@@ -14,7 +14,7 @@ from app import uploads
 from app.auth_utils import login_required
 from app.models import (
     MAX_ZONES, OVERLAY_MODELS, AppSetting, ColorButton, CustomPlaylist, CustomPlaylistItem,
-    EffectPreset, SavedColor, Scene, SceneZone, Zone, ZoneLayout, ZoneMember,
+    EffectPreset, FixtureDimmer, SavedColor, Scene, SceneZone, Zone, ZoneLayout, ZoneMember,
     all_is_virtual, clamp_white, get_all_zones, has_white_channel, is_managed_overlay,
     ref_name_lookups,
 )
@@ -469,6 +469,18 @@ def _store_single_layout(slot, source_name, grid, now):
     layout.imported_at = now
 
 
+def _store_dimmers(staged, replace):
+    """Record the dimmer channels of the models being imported."""
+    query = FixtureDimmer.query
+    if not replace:
+        names = [source_name for _slot, source_name, _grid, _label in staged]
+        query = query.filter(FixtureDimmer.source_name.in_(names))
+    query.delete(synchronize_session=False)
+    for _slot, source_name, grid, _label in staged:
+        for channel in grid.get("dimmers", []):
+            db.session.add(FixtureDimmer(source_name=source_name, channel=channel))
+
+
 def _store_zone_members(slot, group, now):
     """Write several models as the zone's ZoneMember rows (clearing its layout)."""
     ZoneLayout.query.filter_by(slot=slot).delete()
@@ -533,6 +545,8 @@ def layout_import():
                 ZoneLayout.query.filter_by(slot=stale).delete()
                 ZoneMember.query.filter_by(slot=stale).delete()
 
+    _store_dimmers(staged, bool(body.get("replace")))
+
     for slot, group in by_slot.items():
         # One model keeps the ZoneLayout row it always had; several become
         # ZoneMember rows. Whichever representation isn't used is cleared so a
@@ -567,6 +581,7 @@ def layout_clear():
     """Drop all stored layouts, returning zones to FPP's rectangular handling."""
     ZoneLayout.query.delete()
     ZoneMember.query.delete()
+    FixtureDimmer.query.delete()
     try:
         db.session.commit()
     except Exception as exc:
@@ -802,6 +817,10 @@ def build_ui_payload():
             m.to_dict(include_data=True)
             for m in ZoneMember.query.order_by(ZoneMember.slot, ZoneMember.position).all()
         ],
+        "fixture_dimmers": [
+            {"source_name": d.source_name, "channel": d.channel}
+            for d in FixtureDimmer.query.order_by(FixtureDimmer.channel).all()
+        ],
         "saved_colors": [
             {"id": c.id, "name": c.name, "hex_value": c.hex_value, "white": c.white}
             for c in SavedColor.query.all()
@@ -929,6 +948,18 @@ def _restore_zone_members(data):
                 current_app.logger.warning("Restore: %s", err)
                 continue
             db.session.add(member)
+
+
+def _restore_fixture_dimmers(data):
+    """Replace every FixtureDimmer row, skipping malformed ones."""
+    if isinstance(data.get("fixture_dimmers"), list):
+        FixtureDimmer.query.delete()
+        for item in data["fixture_dimmers"]:
+            if not isinstance(item, dict):
+                continue
+            name, channel = item.get("source_name"), item.get("channel")
+            if isinstance(name, str) and name and type(channel) is int and channel > 0:
+                db.session.add(FixtureDimmer(source_name=name[:64], channel=channel))
 
 
 def _restore_colors(data):
@@ -1126,6 +1157,7 @@ def apply_ui_backup(data):
     _restore_zones(data)
     _restore_zone_layouts(data)
     _restore_zone_members(data)
+    _restore_fixture_dimmers(data)
     color_id_map = _restore_colors(data)
     _restore_scenes(data, color_id_map)
     _restore_effect_presets(data)

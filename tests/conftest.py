@@ -152,12 +152,15 @@ def instant_activation_checks(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def forget_white_layer():
+def forget_white_layer(monkeypatch):
     """The white layer remembers lit models in memory; every test starts clean."""
     from app import white_layer
+    monkeypatch.setattr(white_layer, "_WATCH_SECONDS", 0)   # no background thread
     white_layer._levels.clear()
+    white_layer._dimmed.clear()
     yield
     white_layer._levels.clear()
+    white_layer._dimmed.clear()
 
 
 @pytest.fixture
