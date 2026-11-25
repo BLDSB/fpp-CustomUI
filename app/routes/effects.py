@@ -136,9 +136,9 @@ def _send_effect(models, effect, args):
     # An effect only draws RGB; white set by a color or scene must not glow on.
     # A real "All" model covers every zone, so it takes all white with it.
     if "All" in targets:
-        white_layer.clear()
+        white_layer.clear_white()
     else:
-        white_layer.drop(targets)
+        white_layer.drop_white(targets)
     try:
         _post_effect(targets, effect, args)
 
@@ -150,6 +150,7 @@ def _send_effect(models, effect, args):
 
         # FPP sometimes ignores the first start after a reset; confirm and repeat.
         still_off = ensure_models_active(targets, start_again)
+        white_layer.hold_dimmers(targets)
     except requests.RequestException as exc:
         current_app.logger.error("FPP run effect error: %s", exc)
         return False, fpp_error_text(exc)
@@ -297,7 +298,8 @@ def stop_effect():
     data      = json_object()
     models    = _str_list(data.get("models")) or []
 
-    model_str = ",".join(expand_overlay_models(models)) if models else "All"
+    targets = expand_overlay_models(models or ["All"])
+    model_str = ",".join(targets)
     command = {
         "command": "Overlay Model Effect",
         "multisyncCommand": False,
@@ -307,6 +309,7 @@ def stop_effect():
     try:
         resp = requests.post(fpp_url("/command"), json=command, timeout=10)
         resp.raise_for_status()
+        white_layer.drop(targets)   # stopping an effect switches its models off
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"error": f"Could not stop effects: {fpp_error_text(exc)}"}), 502

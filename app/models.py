@@ -390,6 +390,36 @@ def ref_name_lookups():
     }
 
 
+class FixtureDimmer(db.Model):
+    """The master dimmer channel of a fixture inside an imported layout model.
+
+    A DMX fixture with a dimmer stays dark however its color channels are set
+    until that channel is raised, and an overlay model cannot reach it.  Rows
+    are keyed by the display-map model they came from, so regrouping zones keeps
+    them with their fixtures.
+    """
+    __tablename__ = "fixture_dimmers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    source_name = db.Column(db.String(64), nullable=False, index=True)
+    channel = db.Column(db.Integer, nullable=False)  # 1-based FPP channel
+
+
+def dimmer_channels(models):
+    """``{overlay model: [dimmer channels]}`` for those of ``models`` that have any."""
+    wanted = set(models)
+    by_source = {}
+    for row in FixtureDimmer.query.order_by(FixtureDimmer.channel).all():
+        by_source.setdefault(row.source_name, []).append(row.channel)
+    if not by_source:
+        return {}
+    out = {}
+    for row in [*ZoneLayout.query.all(), *ZoneMember.query.all()]:
+        if row.fpp_model_name in wanted and row.source_name in by_source:
+            out[row.fpp_model_name] = by_source[row.source_name]
+    return out
+
+
 def is_managed_overlay(name):
     """True for an overlay model name this app owns: All, Zone N, or Zone N.M."""
     if name in OVERLAY_MODELS:

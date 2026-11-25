@@ -117,7 +117,7 @@ def _set_scene_colors(scene):
             if zone.white is None:
                 # Saved before white existed: show just its color, without
                 # white left over from whatever lit this zone before.
-                white_layer.drop(targets)
+                white_layer.drop_white(targets)
             else:
                 whites.update({t: zone.white for t in targets})
         except requests.RequestException as exc:
@@ -132,6 +132,11 @@ def _set_scene_colors(scene):
                 current_app.logger.error("Scene %d re-apply error for %s: %s", scene.id, target, exc)
 
     errors += ensure_models_active(list(colors), reactivate)
+    try:
+        white_layer.hold_dimmers(list(colors))
+    except requests.RequestException as exc:
+        current_app.logger.error("Scene %d dimmer apply error: %s", scene.id, exc)
+        errors += sorted(colors)
     try:
         white_layer.apply(whites)       # RGBW zones only; others ignore white
     except requests.RequestException as exc:

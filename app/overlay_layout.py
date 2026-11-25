@@ -15,7 +15,10 @@ so a whole-model ``fill`` still lights every real pixel.
 The geometry comes from ``/home/fpp/media/config/virtualdisplaymap``, which
 xLights' FPP Connect uploads.  Each node is one line of
 ``x,y,z,startChannel,channelCount,colorOrder,pixelSize`` under a
-``# Model: 'Name', N nodes`` header.  Because a node's index is derived from its
+``# Model: 'Name', N nodes`` header.  A hand- or script-built map for DMX
+fixtures may add ``# Dimmers: 1,7,13`` (1-based channels) under a header to name
+the master dimmer channels that must be raised for that model to light, and
+``# Zone: 3`` to choose its zone instead of the suggested grouping.  Because a node's index is derived from its
 channel and its position from its coordinates, upstream xLights complexity
 (wiring order, start corner, strand count, string order) is already baked in and
 cannot affect the result.
@@ -47,8 +50,17 @@ def parse_display_map(text):
                 start = line.find("'")
                 end = line.rfind("'")
                 name = line[start + 1:end] if 0 <= start < end else line[8:].strip()
-                current = {"name": name, "channels_per_node": 3, "nodes": []}
+                current = {"name": name, "channels_per_node": 3, "nodes": [],
+                           "dimmers": [], "zone": None}
                 models.append(current)
+            elif line.startswith("# Zone:") and current is not None:
+                value = line[len("# Zone:"):].strip()
+                current["zone"] = int(value) if value.isdecimal() else None
+            elif line.startswith("# Dimmers:") and current is not None:
+                current["dimmers"] += [
+                    int(v) for v in line[len("# Dimmers:"):].split(",")
+                    if v.strip().isdecimal() and int(v) > 0
+                ]
             continue
         if current is None:
             continue
@@ -137,10 +149,22 @@ def derive_grid(model):
         grid[row][col] = (channel - base) // cpn + 1
 
     placed = sum(1 for row in grid for cell in row if cell is not None)
-    return _grid_result(
+    result = _grid_result(
         grid, width, height, len(nodes), placed, collisions,
         base + 1, (last + cpn) - base, cpn,
     )
+    result["dimmers"] = sorted(set(model.get("dimmers", [])))
+    result["misaligned"] = _misaligned(nodes, base, cpn)
+    return result
+
+
+def _misaligned(nodes, base, cpn):
+    """Nodes that do not start a whole number of nodes after ``base``.
+
+    A model addresses node ``n`` at ``base + (n - 1) * cpn``, so such a node
+    would silently be driven on the wrong channels.
+    """
+    return sum(1 for _x, _y, channel in nodes if (channel - base) % cpn)
 
 
 def derive_composite_grid(models):
@@ -159,6 +183,9 @@ def derive_composite_grid(models):
     if not nodes:
         return None
     cpn = models[0].get("channels_per_node", 3) or 3
+    # Models can each be fine on their own and still not share one node lattice.
+    if _misaligned(nodes, min(n[2] for n in nodes), cpn):
+        return None
 
     pitches = []
     for m in models:
@@ -209,6 +236,7 @@ def derive_composite_grid(models):
         base + 1, (last + cpn) - base, cpn,
     )
     result["pitch"] = pitch
+    result["dimmers"] = sorted({d for m in models for d in m.get("dimmers", [])})
     return result
 
 
@@ -265,6 +293,11 @@ def validate_grid(grid, label="Layout"):
             f"{MAX_CELLS}-cell limit."
         )
     cpn = grid["channels_per_node"] or 3
+    if grid.get("misaligned"):
+        return (
+            f"{label}: {grid['misaligned']} node(s) are not spaced in multiples of "
+            f"{cpn} channels, so they cannot share one model."
+        )
     capacity = grid["channel_count"] // cpn
     highest = 0
     for row in grid["data"].split(";"):
@@ -313,6 +346,23 @@ def _group_key(name):
     """A model name with its trailing number stripped: "Inside 12" -> "inside"."""
     base = re.sub(r"[\s_\-]*\d+$", "", name or "").strip().lower()
     return base or (name or "").lower()
+
+
+def mapped_groups(models, max_groups):
+    """The zones the map itself asks for, or None to fall back to suggesting.
+
+    Same shape as :func:`suggest_groups`, except that the group indexes are the
+    chosen zones less one, so ``labels`` is a dict.  Used only when every model
+    names a zone in range; a half-specified map would collide with suggestions.
+    """
+    zones = [m.get("zone") for m in models]
+    if not all(z is not None and 1 <= z <= max_groups for z in zones):
+        return None
+    labels = {}
+    for model, zone in zip(models, zones):
+        name = model["name"]
+        labels.setdefault(zone - 1, re.sub(r"[\s_\-]*\d+$", "", name).strip() or name)
+    return labels, [zone - 1 for zone in zones]
 
 
 def suggest_groups(names, max_groups):

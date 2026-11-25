@@ -107,7 +107,7 @@ def send_color():
                 )
             except requests.RequestException:
                 pass
-        # Whatever white those models held goes with them.
+        # Whatever white and dimmers those models held go with them.
         white_layer.drop(conflicts)
 
     def switch_on(models):
@@ -128,6 +128,7 @@ def send_color():
         switch_on(targets)
         # FPP sometimes ignores the first switch-on; confirm and repeat if so.
         still_off = ensure_models_active(targets, switch_on)
+        white_layer.hold_dimmers(targets)
         if white is not None:
             # RGBW zones only; the rest have no white channel and ignore it.
             white_layer.apply({t: white for t in targets})
